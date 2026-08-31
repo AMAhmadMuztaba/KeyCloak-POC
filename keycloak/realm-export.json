@@ -1,0 +1,102 @@
+{
+  "realm": "app-realm",
+  "displayName": "App Realm",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": false,
+  "defaultSignatureAlgorithm": "RS256",
+
+  "roles": {
+    "realm": [
+      { "name": "super-admin", "description": "System-wide super administrator — can create orgs, projects, and roles" },
+      { "name": "user",        "description": "Regular project member" }
+    ],
+    "client": {}
+  },
+
+  "groups": [
+    {
+      "name": "org-alpha", "path": "/org-alpha",
+      "subGroups": [
+        { "name": "admins", "path": "/org-alpha/admins", "subGroups": [] },
+        {
+          "name": "project-1", "path": "/org-alpha/project-1",
+          "subGroups": [{ "name": "admins", "path": "/org-alpha/project-1/admins", "subGroups": [] }]
+        },
+        {
+          "name": "project-2", "path": "/org-alpha/project-2",
+          "subGroups": [{ "name": "admins", "path": "/org-alpha/project-2/admins", "subGroups": [] }]
+        }
+      ]
+    },
+    {
+      "name": "org-beta", "path": "/org-beta",
+      "subGroups": [
+        { "name": "admins", "path": "/org-beta/admins", "subGroups": [] },
+        {
+          "name": "project-3", "path": "/org-beta/project-3",
+          "subGroups": [{ "name": "admins", "path": "/org-beta/project-3/admins", "subGroups": [] }]
+        }
+      ]
+    },
+    {
+      "name": "org-gamma", "path": "/org-gamma",
+      "subGroups": [
+        { "name": "admins", "path": "/org-gamma/admins", "subGroups": [] },
+        {
+          "name": "project-4", "path": "/org-gamma/project-4",
+          "subGroups": [{ "name": "admins", "path": "/org-gamma/project-4/admins", "subGroups": [] }]
+        },
+        {
+          "name": "project-5", "path": "/org-gamma/project-5",
+          "subGroups": [{ "name": "admins", "path": "/org-gamma/project-5/admins", "subGroups": [] }]
+        }
+      ]
+    }
+  ],
+
+  "clients": [
+    {
+      "clientId": "app-client",
+      "name": "Application Client",
+      "rootUrl": "http://localhost:3000",
+      "baseUrl": "/",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "redirectUris": ["http://localhost:3000/*", "http://localhost:5173/*"],
+      "webOrigins": ["http://localhost:3000", "http://localhost:5173", "+"],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:3000/*##http://localhost:5173/*",
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+
+  "defaultDefaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"],
+  "defaultOptionalClientScopes": ["offline_access", "address", "phone", "microprofile-jwt"]
+}
