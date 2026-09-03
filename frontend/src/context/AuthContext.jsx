@@ -68,10 +68,42 @@ export function AuthProvider({ children }) {
       })
       .then((authenticated) => {
         setIsAuthenticated(authenticated);
-        if (authenticated) setTokenParsed(keycloak.tokenParsed);
+        if (authenticated) {
+          const tp = keycloak.tokenParsed;
+          setTokenParsed(tp);
+          // M2: Validate restored sessionStorage selection against JWT groups
+          const jwtGroups = tp?.groups || [];
+          const parts = (g) => g.split("/").filter(Boolean);
+          const jwtOrgs = new Set(
+            jwtGroups.filter(g => parts(g).length >= 1).map(g => parts(g)[0])
+          );
+          const storedOrg = sessionStorage.getItem("kc_org");
+          if (storedOrg && !jwtOrgs.has(storedOrg)) {
+            sessionStorage.removeItem("kc_org");
+            sessionStorage.removeItem("kc_project");
+            setSelectedOrg(null);
+            setSelectedProject(null);
+          } else if (storedOrg) {
+            const storedProject = sessionStorage.getItem("kc_project");
+            if (storedProject) {
+              const valid = jwtGroups.some(
+                g => parts(g).length >= 2 && parts(g)[0] === storedOrg && parts(g)[1] === storedProject
+              );
+              if (!valid) {
+                sessionStorage.removeItem("kc_project");
+                setSelectedProject(null);
+              }
+            }
+          }
+        }
       })
       .catch(console.error)
       .finally(() => setIsLoading(false));
+
+    // M1: Keep tokenParsed in sync whenever the token is silently refreshed
+    keycloak.onAuthRefreshSuccess = () => {
+      setTokenParsed({ ...keycloak.tokenParsed });
+    };
 
     keycloak.onTokenExpired = () => {
       keycloak.updateToken(30).catch(() => {
@@ -81,7 +113,9 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const login  = useCallback(() => keycloak.login(), []);
+  const login        = useCallback(() => keycloak.login(), []);
+  const loginWithIdp = useCallback((hint) => keycloak.login({ idpHint: hint }), []);
+  const setupMfa     = useCallback((action) => keycloak.login({ action }), []);
   const logout = useCallback(() => {
     sessionStorage.clear();
     keycloak.logout({ redirectUri: window.location.origin });
@@ -178,11 +212,12 @@ export function AuthProvider({ children }) {
     isAdminMode,
     // actions
     login,
+    loginWithIdp,
+    setupMfa,
     logout,
     selectOrg,
     selectProject,
     enterAdminMode,
-    token: keycloak.token,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

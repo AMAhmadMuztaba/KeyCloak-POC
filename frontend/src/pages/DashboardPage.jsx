@@ -49,23 +49,14 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="dashboard-actions">
-          <button
-            className="btn btn-secondary"
-            onClick={() => navigate("/select-project")}
-          >
+          <button className="btn btn-secondary" onClick={() => navigate("/select-project")}>
             Switch Project
           </button>
-          <button
-            className="btn btn-secondary"
-            onClick={() => navigate("/select-org")}
-          >
+          <button className="btn btn-secondary" onClick={() => navigate("/select-org")}>
             Switch Org
           </button>
           {hasAnyAdminRole && (
-            <button
-              className="btn btn-admin"
-              onClick={() => navigate(getAdminRoute())}
-            >
+            <button className="btn btn-admin" onClick={() => navigate(getAdminRoute())}>
               ⚡ Admin Panel
             </button>
           )}
@@ -81,9 +72,7 @@ export default function DashboardPage() {
             <dt>Email</dt>
             <dd>{user?.email || "—"}</dd>
             <dt>Name</dt>
-            <dd>
-              {[user?.firstName, user?.lastName].filter(Boolean).join(" ") || "—"}
-            </dd>
+            <dd>{[user?.firstName, user?.lastName].filter(Boolean).join(" ") || "—"}</dd>
             <dt>Role</dt>
             <dd><span className={roleCls}>{roleLabel}</span></dd>
           </dl>
@@ -105,10 +94,7 @@ export default function DashboardPage() {
             <p className="text-muted" style={{ fontSize: "0.875rem", marginBottom: "1rem" }}>
               You manage this project.
             </p>
-            <button
-              className="btn btn-primary"
-              onClick={() => navigate("/project-admin")}
-            >
+            <button className="btn btn-primary" onClick={() => navigate("/project-admin")}>
               Manage Members
             </button>
           </div>
@@ -122,6 +108,19 @@ export default function DashboardPage() {
             <li>👥 Members</li>
             <li>📦 Deployments</li>
           </ul>
+        </div>
+      </div>
+
+      {/* ── Security / MFA ── */}
+      <div className="security-section">
+        <div className="security-header">
+          <div>
+            <h3 className="security-title">🔐 Two-Factor Authentication</h3>
+            <p className="security-sub">Add an extra layer of security to your account.</p>
+          </div>
+          <button className="btn btn-primary" onClick={() => navigate("/security")}>
+            Manage MFA →
+          </button>
         </div>
       </div>
     </div>

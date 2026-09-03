@@ -8,6 +8,7 @@ import DashboardPage from "./pages/DashboardPage";
 import SuperAdminDashboard from "./pages/SuperAdminDashboard";
 import OrgAdminDashboard from "./pages/OrgAdminDashboard";
 import ProjectAdminDashboard from "./pages/ProjectAdminDashboard";
+import SecurityPage from "./pages/SecurityPage";
 
 function Spinner() {
   return (
@@ -94,6 +95,7 @@ function AppRoutes() {
       <Route path="/select-org"     element={<OrgSelectPage />} />
       <Route path="/select-project" element={<ProjectSelectPage />} />
       <Route path="/dashboard"      element={<DashboardPage />} />
+      <Route path="/security"       element={<SecurityPage />} />
       <Route path="/"  element={<Navigate to={defaultRoute} replace />} />
       <Route path="*"  element={<Navigate to={defaultRoute} replace />} />
     </Routes>

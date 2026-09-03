@@ -14,10 +14,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-KC_URL   = os.environ.get("KC_URL",                    "http://keycloak:8080")
-REALM    = os.environ.get("KC_REALM",                  "app-realm")
-ADMIN    = os.environ.get("KEYCLOAK_ADMIN",            "admin")
-ADMIN_PW = os.environ.get("KEYCLOAK_ADMIN_PASSWORD",   "admin123")
+KC_URL            = os.environ.get("KC_URL",                    "http://keycloak:8080")
+REALM             = os.environ.get("KC_REALM",                  "app-realm")
+ADMIN             = os.environ.get("KEYCLOAK_ADMIN",            "admin")
+ADMIN_PW          = os.environ.get("KEYCLOAK_ADMIN_PASSWORD",   "")
+GOOGLE_CLIENT_ID  = os.environ.get("GOOGLE_CLIENT_ID",          "")
+GOOGLE_SECRET     = os.environ.get("GOOGLE_CLIENT_SECRET",      "")
+MS_CLIENT_ID      = os.environ.get("MICROSOFT_CLIENT_ID",       "")
+MS_SECRET         = os.environ.get("MICROSOFT_CLIENT_SECRET",   "")
 
 
 # ── HTTP helpers ─────────────────────────────────────────────────────────────
@@ -54,6 +58,14 @@ def post(url, payload, token=None, form=False):
 
 def put(url, token=None):
     return _req("PUT", url, token=token)
+
+
+def put_body(url, payload, token=None):
+    return _req("PUT", url, data=payload, token=token)
+
+
+def delete(url, token=None):
+    return _req("DELETE", url, token=token)
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -137,6 +149,24 @@ def get_user_id(token, username):
     return users[0]["id"] if users else None
 
 
+def force_required_action(token, user_id, username, action_alias):
+    """Add a required action to a user if not already present."""
+    user = get(f"{KC_URL}/admin/realms/{REALM}/users/{user_id}", token)
+    existing = user.get("requiredActions", [])
+    if action_alias in existing:
+        print(f"  {username}: {action_alias} already pending", flush=True)
+        return
+    status, _ = put_body(
+        f"{KC_URL}/admin/realms/{REALM}/users/{user_id}",
+        {**user, "requiredActions": existing + [action_alias]},
+        token=token,
+    )
+    if status in (200, 204):
+        print(f"  {username}: assigned required action {action_alias}", flush=True)
+    else:
+        print(f"  {username}: warning – assign {action_alias} returned {status}", flush=True)
+
+
 # ── Group helpers ─────────────────────────────────────────────────────────────
 
 def get_all_groups(token):
@@ -187,6 +217,309 @@ def assign_group(token, user_id, group_id):
     put(f"{KC_URL}/admin/realms/{REALM}/users/{user_id}/groups/{group_id}", token)
 
 
+# ── Identity Provider helpers ─────────────────────────────────────────────────
+
+def ensure_idp(token, alias, display_name, provider_id, config):
+    status, _ = _req("GET", f"{KC_URL}/admin/realms/{REALM}/identity-provider/instances/{alias}", token=token)
+    if status == 200:
+        print(f"  IdP '{alias}' already exists", flush=True)
+        return
+    payload = {
+        "alias": alias,
+        "displayName": display_name,
+        "providerId": provider_id,
+        "enabled": True,
+        "trustEmail": True,
+        "storeToken": False,
+        "addReadTokenRoleOnCreate": False,
+        "authenticateByDefault": False,
+        "linkOnly": False,
+        "firstBrokerLoginFlowAlias": "first broker login",
+        "config": config,
+    }
+    status, _ = post(f"{KC_URL}/admin/realms/{REALM}/identity-provider/instances", payload, token=token)
+    if status == 201:
+        print(f"  Created IdP '{alias}' ({display_name})", flush=True)
+    elif status == 409:
+        print(f"  IdP '{alias}' already exists", flush=True)
+    else:
+        print(f"  Warning: IdP '{alias}' create returned {status}", flush=True)
+
+
+# ── WebAuthn policy helpers ───────────────────────────────────────────────────
+
+def configure_webauthn_policy(token):
+    """Set rpId, authenticatorAttachment, requireResidentKey, userVerification."""
+    payload = {
+        # Security Key (2FA – cross-platform hardware key)
+        "webAuthnPolicyRpEntityName":                   "keycloak",
+        "webAuthnPolicyRpId":                           "localhost",
+        "webAuthnPolicySignatureAlgorithms":            ["ES256"],
+        "webAuthnPolicyAttestationConveyancePreference":"none",
+        "webAuthnPolicyAuthenticatorAttachment":        "cross-platform",
+        "webAuthnPolicyRequireResidentKey":             "No",
+        "webAuthnPolicyUserVerificationRequirement":    "preferred",
+        "webAuthnPolicyCreateTimeout":                  0,
+        "webAuthnPolicyAvoidSameAuthenticatorRegister": False,
+        # Passkey (passwordless – platform biometrics)
+        "webAuthnPolicyPasswordlessRpEntityName":                   "keycloak",
+        "webAuthnPolicyPasswordlessRpId":                           "localhost",
+        "webAuthnPolicyPasswordlessSignatureAlgorithms":            ["ES256"],
+        "webAuthnPolicyPasswordlessAttestationConveyancePreference":"none",
+        "webAuthnPolicyPasswordlessAuthenticatorAttachment":        "platform",
+        "webAuthnPolicyPasswordlessRequireResidentKey":             "Yes",
+        "webAuthnPolicyPasswordlessUserVerificationRequirement":    "required",
+        "webAuthnPolicyPasswordlessCreateTimeout":                  0,
+        "webAuthnPolicyPasswordlessAvoidSameAuthenticatorRegister": False,
+    }
+    status, _ = put_body(f"{KC_URL}/admin/realms/{REALM}", payload, token=token)
+    if status in (200, 204):
+        print("  WebAuthn policies configured (rpId=localhost, passkeys=platform+resident)", flush=True)
+    else:
+        print(f"  Warning: WebAuthn policy update returned {status}", flush=True)
+
+
+# ── WebAuthn browser-flow helpers ─────────────────────────────────────────────
+
+def _get_token_header(token):
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
+def _raise_priority(exec_id, token):
+    _req("POST", f"{KC_URL}/admin/realms/{REALM}/authentication/executions/{exec_id}/raise-priority", token=token)
+
+
+def setup_webauthn_browser_flow(token):
+    """
+    Create a 'webauthn-browser' flow (copy of browser) that adds:
+      • WebAuthn Passwordless Authenticator (ALTERNATIVE) – for passkey login
+      • WebAuthn Authenticator (ALTERNATIVE) inside forms subflow – for security-key 2FA
+    Then binds the realm to this flow.
+    """
+    FLOW_ALIAS = "webauthn-browser"
+
+    # 1 – copy browser flow if not yet present
+    flows = get(f"{KC_URL}/admin/realms/{REALM}/authentication/flows", token)
+    if not any(f.get("alias") == FLOW_ALIAS for f in flows):
+        status, _ = post(
+            f"{KC_URL}/admin/realms/{REALM}/authentication/flows/browser/copy",
+            {"newName": FLOW_ALIAS},
+            token=token,
+        )
+        if status in (200, 201):
+            print(f"  Copied 'browser' → '{FLOW_ALIAS}'", flush=True)
+        else:
+            print(f"  Warning: copy browser flow returned {status}", flush=True)
+            return
+    else:
+        print(f"  Flow '{FLOW_ALIAS}' already exists", flush=True)
+
+    encoded_alias = urllib.parse.quote(FLOW_ALIAS, safe="")
+    execs_url = f"{KC_URL}/admin/realms/{REALM}/authentication/flows/{encoded_alias}/executions"
+
+    # 2 – add WebAuthn Passwordless at top level if missing
+    execs = get(execs_url, token)
+    has_pl = any(e.get("providerId") == "webauthn-authenticator-passwordless" for e in execs)
+    if not has_pl:
+        status, _ = post(
+            f"{execs_url}/execution",
+            {"provider": "webauthn-authenticator-passwordless"},
+            token=token,
+        )
+        if status in (200, 201):
+            print("  Added WebAuthn Passwordless Authenticator", flush=True)
+        else:
+            print(f"  Warning: add WebAuthn Passwordless returned {status}", flush=True)
+
+    # 3 – set it to ALTERNATIVE and raise priority to appear before forms
+    execs = get(execs_url, token)
+    for e in execs:
+        if e.get("providerId") == "webauthn-authenticator-passwordless":
+            if e.get("requirement") != "ALTERNATIVE":
+                e["requirement"] = "ALTERNATIVE"
+                put_body(execs_url, e, token=token)
+                print("  Set WebAuthn Passwordless → ALTERNATIVE", flush=True)
+            # raise priority until it's above the 'forms' subflow
+            # (raise it len(execs) times to ensure it floats up)
+            for _ in range(len(execs)):
+                _raise_priority(e["id"], token)
+            # restore: lower past cookie/kerberos/idp – we only need it before forms
+            # re-fetch and check level-0 order
+            break
+
+    # 4 – inside the forms subflow, add WebAuthn Authenticator for 2FA
+    execs = get(execs_url, token)
+    forms_flow_id = None
+    for e in execs:
+        if e.get("displayName") == "forms" and e.get("level") == 0:
+            forms_flow_id = e.get("flowId")
+            break
+
+    # 4 – add WebAuthn Authenticator inside the forms subflow for security-key 2FA
+    # The copied forms subflow alias is its displayName (e.g. "webauthn-browser forms")
+    execs = get(execs_url, token)
+    forms_display_name = None
+    for e in execs:
+        if "forms" in (e.get("displayName") or "").lower() and e.get("level") == 0:
+            forms_display_name = e.get("displayName")
+            break
+
+    if forms_display_name:
+        has_wa = any(
+            e.get("providerId") == "webauthn-authenticator"
+            for e in execs
+            if e.get("level") == 1
+        )
+        if not has_wa:
+            forms_alias = urllib.parse.quote(forms_display_name, safe="")
+            status, _ = post(
+                f"{KC_URL}/admin/realms/{REALM}/authentication/flows/{forms_alias}/executions/execution",
+                {"provider": "webauthn-authenticator"},
+                token=token,
+            )
+            if status in (200, 201):
+                print("  Added WebAuthn Authenticator inside forms (2FA)", flush=True)
+            else:
+                print(f"  Warning: add WebAuthn Authenticator inside forms returned {status}", flush=True)
+        else:
+            print("  WebAuthn Authenticator already in forms subflow", flush=True)
+
+        execs = get(execs_url, token)
+        for e in execs:
+            if e.get("providerId") == "webauthn-authenticator" and e.get("level") == 1:
+                if e.get("requirement") != "ALTERNATIVE":
+                    e["requirement"] = "ALTERNATIVE"
+                    put_body(execs_url, e, token=token)
+                    print("  Set WebAuthn Authenticator (forms) → ALTERNATIVE", flush=True)
+                else:
+                    print("  WebAuthn Authenticator (forms) already ALTERNATIVE", flush=True)
+                break
+    else:
+        print("  Warning: could not find 'forms' subflow to add WebAuthn 2FA", flush=True)
+
+    # 5 – bind realm to this flow
+    realm_data = get(f"{KC_URL}/admin/realms/{REALM}", token)
+    if realm_data.get("browserFlow") != FLOW_ALIAS:
+        status, _ = put_body(
+            f"{KC_URL}/admin/realms/{REALM}",
+            {"browserFlow": FLOW_ALIAS},
+            token=token,
+        )
+        if status in (200, 204):
+            print(f"  Realm browserFlow → '{FLOW_ALIAS}'", flush=True)
+        else:
+            print(f"  Warning: set browserFlow returned {status}", flush=True)
+    else:
+        print(f"  Realm already bound to '{FLOW_ALIAS}'", flush=True)
+
+
+# ── Realm security settings ──────────────────────────────────────────────────
+
+def configure_realm_security(token):
+    """Apply brute-force protection, password policy, and session timeouts."""
+    payload = {
+        "bruteForceProtected":            True,
+        "permanentLockout":               False,
+        "maxFailureWaitSeconds":          900,
+        "minimumQuickLoginWaitSeconds":   60,
+        "waitIncrementSeconds":           60,
+        "quickLoginCheckMilliSeconds":    1000,
+        "maxDeltaTimeSeconds":            43200,
+        "failureFactor":                  5,
+        "passwordPolicy":                 "length(12) and upperCase(1) and lowerCase(1) and digits(1) and notUsername() and passwordHistory(3)",
+        "accessTokenLifespan":            300,
+        "ssoSessionIdleTimeout":          1800,
+        "ssoSessionMaxLifespan":          28800,
+        "refreshTokenMaxReuse":           0,
+        "resetPasswordAllowed":           False,
+    }
+    status, _ = put_body(f"{KC_URL}/admin/realms/{REALM}", payload, token=token)
+    if status in (200, 204):
+        print("  Realm security settings applied (brute-force, password policy, session timeouts)", flush=True)
+    else:
+        print(f"  Warning: realm security update returned {status}", flush=True)
+
+
+def configure_client_security(token):
+    """Remove '+' wildcard from webOrigins and add audience mapper to app-client."""
+    clients = get(f"{KC_URL}/admin/realms/{REALM}/clients?clientId=app-client", token)
+    if not clients:
+        print("  Warning: app-client not found", flush=True)
+        return
+    client    = clients[0]
+    client_id = client["id"]
+
+    # Remove '+' wildcard from webOrigins
+    origins = [o for o in (client.get("webOrigins") or []) if o != "+"]
+    if origins != client.get("webOrigins"):
+        status, _ = put_body(
+            f"{KC_URL}/admin/realms/{REALM}/clients/{client_id}",
+            {**client, "webOrigins": origins},
+            token=token,
+        )
+        if status in (200, 204):
+            print(f"  Removed '+' wildcard from app-client webOrigins → {origins}", flush=True)
+        else:
+            print(f"  Warning: update app-client webOrigins returned {status}", flush=True)
+    else:
+        print("  app-client webOrigins already clean (no '+' wildcard)", flush=True)
+
+    # Add audience mapper if missing
+    mappers = client.get("protocolMappers") or []
+    if not any(m.get("protocolMapper") == "oidc-audience-mapper" for m in mappers):
+        status, _ = post(
+            f"{KC_URL}/admin/realms/{REALM}/clients/{client_id}/protocol-mappers/models",
+            {
+                "name":            "audience-mapper",
+                "protocol":        "openid-connect",
+                "protocolMapper":  "oidc-audience-mapper",
+                "consentRequired": False,
+                "config": {
+                    "included.client.audience": "app-client",
+                    "id.token.claim":           "false",
+                    "access.token.claim":       "true",
+                },
+            },
+            token=token,
+        )
+        if status in (200, 201):
+            print("  Added audience mapper to app-client", flush=True)
+        else:
+            print(f"  Warning: add audience mapper returned {status}", flush=True)
+    else:
+        print("  Audience mapper already present on app-client", flush=True)
+
+
+# ── Required-action helpers ───────────────────────────────────────────────────
+
+def enable_required_action(token, alias, label, default=False):
+    actions = get(f"{KC_URL}/admin/realms/{REALM}/authentication/required-actions", token)
+    for action in actions:
+        if action.get("alias") == alias:
+            changed = False
+            if not action.get("enabled"):
+                action["enabled"] = True
+                changed = True
+            if default and not action.get("defaultAction"):
+                action["defaultAction"] = True
+                changed = True
+            elif not default and action.get("defaultAction"):
+                action["defaultAction"] = False
+                changed = True
+            if changed:
+                put_body(
+                    f"{KC_URL}/admin/realms/{REALM}/authentication/required-actions/{urllib.parse.quote(alias, safe='')}",
+                    action,
+                    token=token,
+                )
+                tag = " (default=ON)" if default else ""
+                print(f"  Configured required action: {label}{tag}", flush=True)
+            else:
+                print(f"  Required action already configured: {label}", flush=True)
+            return
+    print(f"  Required action not found in realm: {alias}", flush=True)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -226,6 +559,11 @@ def main():
     assign_realm_roles(token, carol_id, [user_role])          # carol = user + project-admin via group
     assign_realm_roles(token, dave_id,  [user_role])          # dave  = regular user
     print("  Realm roles assigned.", flush=True)
+
+    # ── Force TOTP setup for all demo users ───────────────────────────────
+    print("\nForcing TOTP setup for demo users …", flush=True)
+    for uid, uname in [(alice_id, "alice"), (bob_id, "bob"), (carol_id, "carol"), (dave_id, "dave")]:
+        force_required_action(token, uid, uname, "CONFIGURE_TOTP")
 
     # ── Fetch / ensure group tree ─────────────────────────────────────────
     print("\nBuilding org/project group tree …", flush=True)
@@ -317,6 +655,47 @@ def main():
         g = gid(path)
         if g:
             assign_group(token, dave_id, g)
+
+    # ── Identity Providers (SSO) ──────────────────────────────────────────
+    print("\nConfiguring Identity Providers …", flush=True)
+    if GOOGLE_CLIENT_ID and GOOGLE_SECRET:
+        ensure_idp(token, "google", "Google", "google", {
+            "clientId":     GOOGLE_CLIENT_ID,
+            "clientSecret": GOOGLE_SECRET,
+            "syncMode":     "IMPORT",
+            "useJwksUrl":   "true",
+        })
+    else:
+        print("  GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set – skipping Google IdP", flush=True)
+
+    if MS_CLIENT_ID and MS_SECRET:
+        ensure_idp(token, "microsoft", "Microsoft", "microsoft", {
+            "clientId":     MS_CLIENT_ID,
+            "clientSecret": MS_SECRET,
+            "syncMode":     "IMPORT",
+            "tenant":       "common",
+        })
+    else:
+        print("  MICROSOFT_CLIENT_ID / MICROSOFT_CLIENT_SECRET not set – skipping Microsoft IdP", flush=True)
+
+    # ── Realm security hardening ──────────────────────────────────────────
+    print("\nApplying realm security settings …", flush=True)
+    configure_realm_security(token)
+
+    print("\nHardening app-client (webOrigins, audience mapper) …", flush=True)
+    configure_client_security(token)
+
+    # ── Modern Authenticators ─────────────────────────────────────────────
+    print("\nEnabling modern authenticators …", flush=True)
+    enable_required_action(token, "CONFIGURE_TOTP",                 "Configure OTP",                default=True)
+    enable_required_action(token, "webauthn-register",              "WebAuthn Register")
+    enable_required_action(token, "webauthn-register-passwordless", "WebAuthn Passwordless Register")
+
+    print("\nConfiguring WebAuthn policies …", flush=True)
+    configure_webauthn_policy(token)
+
+    print("\nSetting up WebAuthn browser flow …", flush=True)
+    setup_webauthn_browser_flow(token)
 
     print("""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

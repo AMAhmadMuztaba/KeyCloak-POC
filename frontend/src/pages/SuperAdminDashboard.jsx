@@ -5,7 +5,7 @@ import { apiFetch } from "../api";
 import { useToast } from "../hooks/useToast";
 import UserSearch from "../components/UserSearch";
 
-const TABS = ["Organizations", "Users", "Roles"];
+const TABS = ["Organizations", "Users", "Roles", "Authentication"];
 
 const MEMBERSHIP_APIS = [
   { key: "org:members:read",       label: "Read Org Members",      method: "GET",        path: "/api/admin/org/:org/members" },
@@ -57,6 +57,7 @@ export default function SuperAdminDashboard() {
         {tab === "Organizations" && <OrgsTab token={token} toast={toast} />}
         {tab === "Users"         && <UsersTab token={token} toast={toast} />}
         {tab === "Roles"         && <RolesTab token={token} toast={toast} />}
+        {tab === "Authentication" && <AuthTab token={token} />}
       </div>
     </div>
   );
@@ -517,6 +518,179 @@ function UserManagePanel({ userId, token, toast, allOrgs, allRoles, onBack }) {
           </select>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Authentication ────────────────────────────────────────────────────────────
+const KC_ACCOUNT  = "http://localhost:8080/realms/app-realm/account/";
+const KC_ADMIN    = "http://localhost:8080/admin/master/console/#/app-realm";
+
+const KNOWN_AUTHENTICATORS = [
+  {
+    alias: "CONFIGURE_TOTP",
+    name: "Authenticator App (TOTP)",
+    icon: "📱",
+    desc: "Time-based one-time passwords via Google Authenticator, Authy, or any TOTP app.",
+    alwaysOn: true,
+    userLink:  KC_ACCOUNT,
+    adminLink: `${KC_ADMIN}/authentication/flows`,
+  },
+  {
+    alias: "webauthn-register",
+    name: "WebAuthn / Security Key",
+    icon: "🔑",
+    desc: "Hardware security keys (YubiKey, etc.) and platform authenticators (Touch ID, Face ID).",
+    alwaysOn: false,
+    userLink:  KC_ACCOUNT,
+    adminLink: `${KC_ADMIN}/authentication/required-actions`,
+  },
+  {
+    alias: "webauthn-register-passwordless",
+    name: "Passkeys (Passwordless)",
+    icon: "🛡",
+    desc: "Fully passwordless login using device biometrics or FIDO2 keys.",
+    alwaysOn: false,
+    userLink:  KC_ACCOUNT,
+    adminLink: `${KC_ADMIN}/authentication/required-actions`,
+  },
+];
+
+const IDP_META = {
+  google:    { icon: "🔵", color: "var(--primary)",  label: "Google"    },
+  microsoft: { icon: "🟦", color: "#0078d4",          label: "Microsoft" },
+};
+
+function AuthTab({ token }) {
+  const [idps, setIdps]       = useState([]);
+  const [actions, setActions] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([
+      apiFetch("/api/admin/super/auth/idps",    "GET", undefined, token),
+      apiFetch("/api/admin/super/auth/actions", "GET", undefined, token),
+    ]).then(([idpRes, actRes]) => {
+      setIdps(idpRes.idps || []);
+      setActions(actRes.actions || []);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const actionMap = Object.fromEntries(actions.map(a => [a.alias, a]));
+
+  if (loading) {
+    return (
+      <div className="skeleton-list">
+        {[1,2,3].map(i => <div key={i} className="skeleton-card" />)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="adm-section">
+
+      {/* ── SSO Identity Providers ── */}
+      <div className="auth-section-head">
+        <div>
+          <h3 className="auth-section-title">SSO Identity Providers</h3>
+          <p className="auth-section-desc">
+            Allow users to log in with an external identity provider.
+            {" "}<a className="auth-link auth-link--muted" href={`${KC_ADMIN}/identity-providers`} target="_blank" rel="noreferrer">Keycloak Admin →</a>
+          </p>
+        </div>
+      </div>
+
+      {idps.length === 0 ? (
+        <div className="auth-idp-empty">
+          <span>🔗</span>
+          <p>No identity providers configured yet.</p>
+          <p className="auth-idp-empty-hint">
+            Set <code>GOOGLE_CLIENT_ID</code> / <code>MICROSOFT_CLIENT_ID</code> in your <code>.env</code> and restart to enable SSO.
+          </p>
+          <a className="btn btn-secondary btn-sm" href={`${KC_ADMIN}/identity-providers`} target="_blank" rel="noreferrer">
+            Keycloak Admin → Identity Providers
+          </a>
+        </div>
+      ) : (
+        <div className="auth-idp-grid">
+          {idps.map(idp => {
+            const meta = IDP_META[idp.alias] || { icon: "🔗", color: "var(--text-muted)", label: idp.displayName };
+            return (
+              <div key={idp.alias} className={`auth-idp-card ${idp.enabled ? "auth-idp-card--on" : "auth-idp-card--off"}`}>
+                <span className="auth-idp-icon">{meta.icon}</span>
+                <div className="auth-idp-info">
+                  <span className="auth-idp-name">{meta.label}</span>
+                  <span className="auth-idp-provider">{idp.providerId}</span>
+                </div>
+                <span className={`auth-status-badge ${idp.enabled ? "auth-status-badge--on" : "auth-status-badge--off"}`}>
+                  {idp.enabled ? "Enabled" : "Disabled"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── MFA & Authenticators ── */}
+      <div className="auth-section-head" style={{ marginTop: "0.5rem" }}>
+        <div>
+          <h3 className="auth-section-title">MFA &amp; Authenticators</h3>
+          <p className="auth-section-desc">
+            Multi-factor authentication methods available to users.
+            {" "}<a className="auth-link auth-link--muted" href={`${KC_ADMIN}/authentication`} target="_blank" rel="noreferrer">Keycloak Admin →</a>
+          </p>
+        </div>
+      </div>
+
+      <div className="auth-mfa-grid">
+        {KNOWN_AUTHENTICATORS.map(a => {
+          const live    = actionMap[a.alias];
+          const enabled = a.alwaysOn || (live?.enabled ?? false);
+          return (
+            <div key={a.alias} className="auth-mfa-card">
+              <div className="auth-mfa-head">
+                <span className="auth-mfa-icon">{a.icon}</span>
+                <div>
+                  <div className="auth-mfa-name">{a.name}</div>
+                  <span className={`auth-status-badge ${enabled ? "auth-status-badge--on" : "auth-status-badge--off"}`}>
+                    {enabled ? "Enabled" : "Disabled"}
+                    {a.alwaysOn && " (built-in)"}
+                  </span>
+                </div>
+              </div>
+              <p className="auth-mfa-desc">{a.desc}</p>
+              <div className="auth-mfa-links">
+                <a className="auth-link" href={a.userLink} target="_blank" rel="noreferrer">
+                  User setup →
+                </a>
+                <a className="auth-link auth-link--muted" href={a.adminLink} target="_blank" rel="noreferrer">
+                  Admin flow
+                </a>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Account Self-Service ── */}
+      <div className="auth-account-banner">
+        <span className="auth-account-icon">👤</span>
+        <div>
+          <div className="auth-account-title">User Self-Service MFA</div>
+          <div className="auth-account-desc">
+            Users can set up TOTP, WebAuthn, and passkeys from their Keycloak account page.
+          </div>
+        </div>
+        <a
+          className="btn btn-secondary btn-sm"
+          href="http://localhost:8080/realms/app-realm/account/"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Account Settings →
+        </a>
+      </div>
+
     </div>
   );
 }
