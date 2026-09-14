@@ -1,5 +1,28 @@
 # KeyCLOAK — Multi-Org Project Login
 
+## Post-password organization selector
+
+`keycloak/providers/autom-post-password-org-selector` is a Keycloak
+Authenticator SPI compiled into the local Keycloak image. It changes the
+business login to:
+
+```
+Keycloak email + password → Keycloak organization cards → org-scoped token → project selection
+```
+
+The cards are rendered by the Keycloak `autom` login theme, never by React. The
+provider verifies the authenticated user's native Keycloak membership and stores
+only the selected organization UUID in the server-side authentication session.
+One organization is selected automatically; no membership ends in a Keycloak
+access-denied screen.
+
+Use `docker compose up --build` to build and run the local image. For an
+existing Keycloak server, deploy the generated JAR from
+`keycloak/providers/autom-post-password-org-selector/target/` to
+`/opt/keycloak/providers/`, run `kc.sh build --features=organization`, restart
+Keycloak, then run `Initial script/autom-realm-init.py`. The initializer will not switch the
+browser flow unless Keycloak recognizes the provider.
+
 A full-stack demo of Keycloak-powered authentication with multi-org / multi-project workspace selection and an admin bypass flow.
 
 ## Flow
@@ -9,17 +32,6 @@ Landing → [Keycloak Login] → Org Select → Project Select → Dashboard
                                                 ↓ (admin only)
                                           [Skip button] → Admin Dashboard
 ```
-
-## Demo accounts (auto-created by the init container)
-
-| User  | Password | Role  | Orgs / Projects |
-|-------|----------|-------|-----------------|
-| alice | alice123 | **admin** | org-alpha, org-beta, org-gamma (all projects) |
-| bob   | bob123   | user  | org-alpha / project-1 |
-| carol | carol123 | user  | org-beta / project-3 |
-| dave  | dave123  | user  | org-alpha (project-2) + org-gamma (project-4, 5) |
-
-> **alice** will see a yellow "Skip — Enter as Admin" banner on the project selection page.
 
 ---
 
@@ -43,7 +55,7 @@ docker compose logs -f keycloak-init
 ```
 
 Keycloak admin console → http://localhost:8080  
-Login: `admin` / `admin123`
+Login: use `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD` from your `.env`
 
 ### 2 — Start the frontend (dev mode)
 

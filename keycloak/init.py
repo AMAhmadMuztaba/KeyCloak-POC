@@ -1,5 +1,5 @@
 """
-Keycloak demo-data initialiser – role hierarchy edition.
+Keycloak Autom initializer.
 
 Roles
   super-admin  →  alice
@@ -15,7 +15,8 @@ import urllib.parse
 import urllib.request
 
 KC_URL            = os.environ.get("KC_URL",                    "http://keycloak:8080")
-REALM             = os.environ.get("KC_REALM",                  "app-realm")
+REALM             = os.environ.get("KC_REALM",                  "autom-realm")
+CLIENT_ID         = os.environ.get("KC_CLIENT_ID",              "autom-app")
 ADMIN             = os.environ.get("KEYCLOAK_ADMIN",            "admin")
 ADMIN_PW          = os.environ.get("KEYCLOAK_ADMIN_PASSWORD",   "")
 GOOGLE_CLIENT_ID  = os.environ.get("GOOGLE_CLIENT_ID",          "")
@@ -217,6 +218,63 @@ def assign_group(token, user_id, group_id):
     put(f"{KC_URL}/admin/realms/{REALM}/users/{user_id}/groups/{group_id}", token)
 
 
+# ── Native Organization helpers ─────────────────────────────────────────────
+
+def enable_organizations(token):
+    """Enable the Keycloak Organizations feature for this realm."""
+    realm = get(f"{KC_URL}/admin/realms/{REALM}", token)
+    status, _ = put_body(
+        f"{KC_URL}/admin/realms/{REALM}",
+        {**realm, "organizationsEnabled": True},
+        token=token,
+    )
+    if status not in (200, 204):
+        raise RuntimeError(f"Could not enable Keycloak Organizations (HTTP {status}).")
+
+
+def list_organizations(token):
+    return get(f"{KC_URL}/admin/realms/{REALM}/organizations?max=500", token)
+
+
+def ensure_organization(token, name, alias):
+    existing = next((org for org in list_organizations(token)
+                     if org.get("alias") == alias or org.get("name") == name), None)
+    if existing:
+        print(f"  Organization '{alias}' already exists", flush=True)
+        return existing["id"]
+
+    status, _ = post(
+        f"{KC_URL}/admin/realms/{REALM}/organizations",
+        {"name": name, "alias": alias, "enabled": True},
+        token=token,
+    )
+    if status not in (201, 204):
+        raise RuntimeError(f"Could not create Keycloak Organization '{alias}' (HTTP {status}).")
+    created = next((org for org in list_organizations(token) if org.get("alias") == alias), None)
+    if not created:
+        raise RuntimeError(f"Created Keycloak Organization '{alias}' could not be read back.")
+    print(f"  Created Keycloak Organization '{alias}'", flush=True)
+    return created["id"]
+
+
+def add_organization_scope_to_client(token, client_id):
+    clients = get(f"{KC_URL}/admin/realms/{REALM}/clients?clientId={urllib.parse.quote(client_id)}", token)
+    client = next((item for item in clients if item.get("clientId") == client_id), None)
+    if not client:
+        print(f"  Warning: client '{client_id}' was not found; org scope was not assigned", flush=True)
+        return
+    scopes = get(f"{KC_URL}/admin/realms/{REALM}/client-scopes", token)
+    scope = next((item for item in scopes if item.get("name") == "organization"), None)
+    if not scope:
+        raise RuntimeError("The built-in 'organization' client scope is missing.")
+    status, _ = put(
+        f"{KC_URL}/admin/realms/{REALM}/clients/{client['id']}/default-client-scopes/{scope['id']}",
+        token=token,
+    )
+    if status not in (204, 409):
+        raise RuntimeError(f"Could not attach organization scope to '{client_id}' (HTTP {status}).")
+
+
 # ── Identity Provider helpers ─────────────────────────────────────────────────
 
 def ensure_idp(token, alias, display_name, provider_id, config):
@@ -289,27 +347,34 @@ def _raise_priority(exec_id, token):
     _req("POST", f"{KC_URL}/admin/realms/{REALM}/authentication/executions/{exec_id}/raise-priority", token=token)
 
 
+def _lower_priority(exec_id, token):
+    _req("POST", f"{KC_URL}/admin/realms/{REALM}/authentication/executions/{exec_id}/lower-priority", token=token)
+
+
 def setup_webauthn_browser_flow(token):
     """
-    Create a 'webauthn-browser' flow (copy of browser) that adds:
+    Create a 'webauthn-browser' flow (copy of the organization-aware browser
+    flow when available) that adds:
       • WebAuthn Passwordless Authenticator (ALTERNATIVE) – for passkey login
       • WebAuthn Authenticator (ALTERNATIVE) inside forms subflow – for security-key 2FA
-    Then binds the realm to this flow.
+    The flow is NOT bound to the realm; assign it per-client for passkey-enabled clients.
     """
     FLOW_ALIAS = "webauthn-browser"
 
-    # 1 – copy browser flow if not yet present
+    # 1 – Preserve Keycloak's organization identity-first execution. Copying
+    # the old `browser` flow would silently move org selection back to the SPA.
     flows = get(f"{KC_URL}/admin/realms/{REALM}/authentication/flows", token)
+    source_flow = "organization" if any(f.get("alias") == "organization" for f in flows) else "browser"
     if not any(f.get("alias") == FLOW_ALIAS for f in flows):
         status, _ = post(
-            f"{KC_URL}/admin/realms/{REALM}/authentication/flows/browser/copy",
+            f"{KC_URL}/admin/realms/{REALM}/authentication/flows/{urllib.parse.quote(source_flow, safe='')}/copy",
             {"newName": FLOW_ALIAS},
             token=token,
         )
         if status in (200, 201):
-            print(f"  Copied 'browser' → '{FLOW_ALIAS}'", flush=True)
+            print(f"  Copied '{source_flow}' → '{FLOW_ALIAS}'", flush=True)
         else:
-            print(f"  Warning: copy browser flow returned {status}", flush=True)
+            print(f"  Warning: copy {source_flow} flow returned {status}", flush=True)
             return
     else:
         print(f"  Flow '{FLOW_ALIAS}' already exists", flush=True)
@@ -397,26 +462,318 @@ def setup_webauthn_browser_flow(token):
     else:
         print("  Warning: could not find 'forms' subflow to add WebAuthn 2FA", flush=True)
 
-    # 5 – bind realm to this flow
+    # The webauthn-browser flow is NOT bound to the realm. It exists for optional
+    # per-client assignment (clients that support passkeys). The realm default
+    # stays as autom-post-password-org-browser-v1 (set by setup_autom_browser_flow).
+    print(f"  Flow '{FLOW_ALIAS}' configured (not bound to realm — use per-client override if needed)", flush=True)
+
+
+# ── Autom custom browser flow ────────────────────────────────────────────────
+
+AUTOM_FLOW_ALIAS = "autom-post-password-org-browser-v1"
+POST_AUTH_SUBFLOW_ALIAS = "autom-post-auth-selectors"
+
+
+def setup_autom_browser_flow(token):
+    """
+    Creates the Autom browser flow with:
+    - Organization Identity-First subflow DISABLED (our plugin handles org/project selection)
+    - CONDITIONAL post-auth subflow INSIDE forms (same level as 2FA — KC-safe pattern)
+
+      [ALT]  auth-cookie                          level 0
+      [ALT]  identity-provider-redirector          level 0
+      [DIS]  Organization subflow                  level 0  disabled — plugin replaces it
+      [ALT]  forms subflow                         level 0
+               [REQ] Username Password Form         level 1  (email + password together)
+               [COND] autom-post-auth-selectors     level 1
+                       [REQ] autom-condition-always       level 2
+                       [REQ] autom-post-password-org-selector level 2
+                       [REQ] autom-post-org-project-selector  level 2
+               [COND] 2FA conditional               level 1  (from browser copy)
+
+    KC 26 rule: CONDITIONAL at TOP level alongside ALTERNATIVE triggers the conflict.
+    CONDITIONAL inside a subflow (level 1+) is safe.
+
+    Cookie auth: forms skipped -> CONDITIONAL selectors never run.
+    Fresh auth:  email+password on ONE page -> CONDITIONAL selectors -> optional 2FA.
+
+    Idempotent: deletes and recreates the flow on every run.
+    """
+    flows = get(f"{KC_URL}/admin/realms/{REALM}/authentication/flows", token)
+
+    # Delete existing flow for a clean rebuild.
+    existing = next((f for f in flows if f.get("alias") == AUTOM_FLOW_ALIAS), None)
+    if existing:
+        realm_data = get(f"{KC_URL}/admin/realms/{REALM}", token)
+        if realm_data.get("browserFlow") == AUTOM_FLOW_ALIAS:
+            put_body(f"{KC_URL}/admin/realms/{REALM}", {"browserFlow": "browser"}, token=token)
+            print("  Temporarily bound realm to 'browser' for flow cleanup", flush=True)
+        status, _ = delete(
+            f"{KC_URL}/admin/realms/{REALM}/authentication/flows/{existing['id']}",
+            token=token,
+        )
+        print(f"  Deleted existing '{AUTOM_FLOW_ALIAS}' (status {status}) for clean rebuild", flush=True)
+
+    # 1. Copy built-in browser flow as the starting point.
+    status, _ = post(
+        f"{KC_URL}/admin/realms/{REALM}/authentication/flows/browser/copy",
+        {"newName": AUTOM_FLOW_ALIAS},
+        token=token,
+    )
+    if status not in (200, 201):
+        print(f"  ERROR: copy browser flow returned {status}", flush=True)
+        return
+    print(f"  Copied 'browser' -> '{AUTOM_FLOW_ALIAS}'", flush=True)
+
+    encoded_alias = urllib.parse.quote(AUTOM_FLOW_ALIAS, safe="")
+    execs_url = f"{KC_URL}/admin/realms/{REALM}/authentication/flows/{encoded_alias}/executions"
+
+    # 2. Disable the KC 26 Organization Identity-First subflow (level 0).
+    #    Our custom autom-post-password-org-selector plugin handles org selection
+    #    after authentication — we don't need KC's identity-first email-only page.
+    execs = get(execs_url, token)
+    org_subflow = next(
+        (e for e in execs
+         if e.get("authenticationFlow")
+         and "organization" in e.get("displayName", "").lower()
+         and e.get("level") == 0),
+        None,
+    )
+    if org_subflow:
+        if org_subflow.get("requirement") != "DISABLED":
+            org_subflow["requirement"] = "DISABLED"
+            put_body(execs_url, org_subflow, token=token)
+        print(f"  Disabled Organization Identity-First subflow (org selection handled by plugin)", flush=True)
+    else:
+        print("  Organization subflow not found at level 0 (may already be absent)", flush=True)
+
+    # 3. Find the forms subflow at level 0 (KC names it "{AUTOM_FLOW_ALIAS} forms").
+    execs = get(execs_url, token)
+    forms_exec = next(
+        (e for e in execs
+         if e.get("authenticationFlow") and "forms" in e.get("displayName", "").lower()
+         and e.get("level") == 0),
+        None,
+    )
+    if not forms_exec:
+        print("  ERROR: forms subflow not found at level 0 in the copied browser flow", flush=True)
+        return
+    forms_alias = forms_exec.get("displayName")
+    print(f"  Found forms subflow: '{forms_alias}'", flush=True)
+
+    # 3. Add the CONDITIONAL post-auth subflow INSIDE the forms subflow (level 1).
+    forms_encoded = urllib.parse.quote(forms_alias, safe="")
+    status, _ = post(
+        f"{KC_URL}/admin/realms/{REALM}/authentication/flows/{forms_encoded}/executions/flow",
+        {"alias": POST_AUTH_SUBFLOW_ALIAS, "type": "basic-flow",
+         "description": "Autom org+project selection (always-true condition)"},
+        token=token,
+    )
+    if status not in (200, 201):
+        print(f"  ERROR: create post-auth subflow inside forms returned {status}", flush=True)
+        return
+    print(f"  Created '{POST_AUTH_SUBFLOW_ALIAS}' inside '{forms_alias}'", flush=True)
+
+    # 4. Set the new subflow's requirement to CONDITIONAL.
+    execs = get(execs_url, token)
+    post_auth_exec = next(
+        (e for e in execs
+         if e.get("displayName") == POST_AUTH_SUBFLOW_ALIAS and e.get("authenticationFlow")),
+        None,
+    )
+    if not post_auth_exec:
+        print(f"  ERROR: '{POST_AUTH_SUBFLOW_ALIAS}' not found in executions after creation", flush=True)
+        return
+    post_auth_exec["requirement"] = "CONDITIONAL"
+    put_body(execs_url, post_auth_exec, token=token)
+    print(f"  Set '{POST_AUTH_SUBFLOW_ALIAS}' -> CONDITIONAL", flush=True)
+
+    # 5. Add three providers inside the CONDITIONAL subflow.
+    subflow_encoded = urllib.parse.quote(POST_AUTH_SUBFLOW_ALIAS, safe="")
+    for provider_id, label in [
+        ("autom-condition-always",           "condition (always-true)"),
+        ("autom-post-password-org-selector", "org selector"),
+        ("autom-post-org-project-selector",  "project selector"),
+    ]:
+        status, _ = post(
+            f"{KC_URL}/admin/realms/{REALM}/authentication/flows/{subflow_encoded}/executions/execution",
+            {"provider": provider_id},
+            token=token,
+        )
+        if status in (200, 201):
+            print(f"  Added {label}", flush=True)
+        else:
+            print(f"  Warning: add {label} returned {status}", flush=True)
+
+    # 6. Set all three inner executions to REQUIRED.
+    execs = get(execs_url, token)
+    for e in execs:
+        pid = e.get("providerId")
+        if pid in ("autom-condition-always",
+                   "autom-post-password-org-selector",
+                   "autom-post-org-project-selector"):
+            if e.get("requirement") != "REQUIRED":
+                e["requirement"] = "REQUIRED"
+                put_body(execs_url, e, token=token)
+                print(f"  Set {pid} -> REQUIRED", flush=True)
+
+    # 7. Bind realm browser flow.
     realm_data = get(f"{KC_URL}/admin/realms/{REALM}", token)
-    if realm_data.get("browserFlow") != FLOW_ALIAS:
+    if realm_data.get("browserFlow") != AUTOM_FLOW_ALIAS:
         status, _ = put_body(
             f"{KC_URL}/admin/realms/{REALM}",
-            {"browserFlow": FLOW_ALIAS},
+            {"browserFlow": AUTOM_FLOW_ALIAS},
             token=token,
         )
         if status in (200, 204):
-            print(f"  Realm browserFlow → '{FLOW_ALIAS}'", flush=True)
+            print(f"  Realm browserFlow -> '{AUTOM_FLOW_ALIAS}'", flush=True)
         else:
             print(f"  Warning: set browserFlow returned {status}", flush=True)
     else:
-        print(f"  Realm already bound to '{FLOW_ALIAS}'", flush=True)
+        print(f"  Realm already bound to '{AUTOM_FLOW_ALIAS}'", flush=True)
+
+
+def add_project_mapper(token):
+    """
+    Adds a User Session Note mapper to the autom-app client so that the selected
+    project group ID appears as 'project_id' in the access token.
+    """
+    clients = get(
+        f"{KC_URL}/admin/realms/{REALM}/clients?clientId={urllib.parse.quote(CLIENT_ID)}", token
+    )
+    client = next((c for c in clients if c.get("clientId") == CLIENT_ID), None)
+    if not client:
+        print(f"  Warning: client '{CLIENT_ID}' not found", flush=True)
+        return
+
+    existing = get(
+        f"{KC_URL}/admin/realms/{REALM}/clients/{client['id']}/protocol-mappers/models", token
+    ) or []
+    mappings = [
+        ("autom-project-id", "autom.project.group.id", "project_id"),
+        ("autom-project-name", "autom.project.name", "project_name"),
+        ("autom-active-organization-id", "autom.organization.id", "autom_organization_id"),
+    ]
+    for name, note, claim in mappings:
+        if any(m.get("config", {}).get("user.session.note") == note for m in existing):
+            print(f"  {claim} mapper already on {CLIENT_ID}", flush=True)
+            continue
+        status, _ = post(
+            f"{KC_URL}/admin/realms/{REALM}/clients/{client['id']}/protocol-mappers/models",
+            {"name": name, "protocol": "openid-connect", "protocolMapper": "oidc-usersessionmodel-note-mapper",
+             "consentRequired": False,
+             "config": {"user.session.note": note, "claim.name": claim, "jsonType.label": "String",
+                        "id.token.claim": "true", "access.token.claim": "true", "userinfo.token.claim": "true"}},
+            token=token,
+        )
+        if status in (200, 201):
+            print(f"  Added {claim} mapper to {CLIENT_ID}", flush=True)
+        else:
+            print(f"  Warning: add {claim} mapper returned {status}", flush=True)
+
+
+# ── Organization member helpers ───────────────────────────────────────────────
+
+def add_org_member(token, org_id, user_id):
+    """Add a user to a native KC organization."""
+    status, _ = post(
+        f"{KC_URL}/admin/realms/{REALM}/organizations/{org_id}/members",
+        {"id": user_id},
+        token=token,
+    )
+    if status not in (201, 204, 409):
+        print(f"  Warning: add org member returned {status}", flush=True)
+
+
+def setup_demo_users(token, groups):
+    """
+    Creates demo users and assigns them to orgs + project groups.
+
+      alice  – super-admin (no org membership)
+      bob    – org-admin for org-alpha (member of /org-alpha/admins)
+      carol  – project-admin for org-beta/project-3 (/org-beta/project-3/admins)
+      dave   – project-member for org-alpha/project-1 (/org-alpha/project-1)
+    """
+    print("\nCreating demo users …", flush=True)
+
+    demo = [
+        ("alice",  "alice@example.com",  "Alice",  "Admin",   "Password1!"),
+        ("bob",    "bob@example.com",    "Bob",    "OrgAdmin","Password1!"),
+        ("carol",  "carol@example.com",  "Carol",  "ProjAdmin","Password1!"),
+        ("dave",   "dave@example.com",   "Dave",   "Member",  "Password1!"),
+    ]
+    for username, email, first, last, pw in demo:
+        create_user(token, username, email, first, last, pw)
+
+    def uid(username):
+        return get_user_id(token, username)
+
+    # alice → super-admin realm role
+    alice_id = uid("alice")
+    if alice_id:
+        super_admin_role = get_realm_role(token, "super-admin")
+        if super_admin_role:
+            assign_realm_roles(token, alice_id, [super_admin_role])
+            print("  alice → super-admin role", flush=True)
+
+    # Fetch orgs for membership assignment
+    orgs = {o["alias"]: o["id"] for o in list_organizations(token)}
+
+    # bob → org-alpha member + /org-alpha/admins group
+    bob_id = uid("bob")
+    if bob_id and "org-alpha" in orgs:
+        add_org_member(token, orgs["org-alpha"], bob_id)
+        g = groups.get("/org-alpha/admins")
+        if g:
+            assign_group(token, bob_id, g)
+        print("  bob → org-alpha (admins)", flush=True)
+
+    # carol → org-beta member + /org-beta/project-3/admins
+    carol_id = uid("carol")
+    if carol_id and "org-beta" in orgs:
+        add_org_member(token, orgs["org-beta"], carol_id)
+        g = groups.get("/org-beta/project-3/admins")
+        if g:
+            assign_group(token, carol_id, g)
+        print("  carol → org-beta / project-3/admins", flush=True)
+
+    # dave → org-alpha member + /org-alpha/project-1
+    dave_id = uid("dave")
+    if dave_id and "org-alpha" in orgs:
+        add_org_member(token, orgs["org-alpha"], dave_id)
+        g = groups.get("/org-alpha/project-1")
+        if g:
+            assign_group(token, dave_id, g)
+        print("  dave → org-alpha / project-1", flush=True)
 
 
 # ── Realm security settings ──────────────────────────────────────────────────
 
+def _build_security_headers():
+    """Build KC browserSecurityHeaders with correctly quoted CSP keywords.
+
+    Single quotes are constructed with chr(39) so the string survives bash
+    heredoc quoting (which strips literal single quotes from the script body).
+    """
+    q = chr(39)
+    csp = (
+        f"frame-src {q}self{q}; "
+        f"frame-ancestors {q}self{q} https://*.seliselocal.com "
+        f"http://localhost:* https://localhost:*; "
+        f"object-src {q}none{q};"
+    )
+    return {
+        "contentSecurityPolicy": csp,
+        "xFrameOptions": "",          # cleared — conflicts with frame-ancestors in Chrome
+        "xContentTypeOptions": "nosniff",
+        "referrerPolicy": "no-referrer",
+        "xRobotsTag": "none",
+        "strictTransportSecurity": "max-age=31536000; includeSubDomains",
+    }
+
+
 def configure_realm_security(token):
-    """Apply brute-force protection, password policy, and session timeouts."""
+    """Apply brute-force protection, password policy, session timeouts, and CSP headers."""
     payload = {
         "bruteForceProtected":            True,
         "permanentLockout":               False,
@@ -432,10 +789,15 @@ def configure_realm_security(token):
         "ssoSessionMaxLifespan":          28800,
         "refreshTokenMaxReuse":           0,
         "resetPasswordAllowed":           False,
+        # Allow the app to load KC in a hidden iframe for silent SSO check
+        # (keycloak-js onLoad:'check-sso' + silentCheckSsoRedirectUri).
+        # xFrameOptions is cleared because it conflicts with frame-ancestors in Chrome.
+        # Single quotes are built with chr(39) to survive bash heredoc quoting.
+        "browserSecurityHeaders": _build_security_headers(),
     }
     status, _ = put_body(f"{KC_URL}/admin/realms/{REALM}", payload, token=token)
     if status in (200, 204):
-        print("  Realm security settings applied (brute-force, password policy, session timeouts)", flush=True)
+        print("  Realm security settings applied (brute-force, password policy, session timeouts, CSP)", flush=True)
     else:
         print(f"  Warning: realm security update returned {status}", flush=True)
 
@@ -490,6 +852,207 @@ def configure_client_security(token):
         print("  Audience mapper already present on app-client", flush=True)
 
 
+# ── autom-app PKCE enforcement ───────────────────────────────────────────────
+
+def configure_autom_app_pkce(token):
+    """Require PKCE S256 on autom-app so the server rejects auth-code exchanges
+    that lack a code_verifier (prevents auth-code interception attacks)."""
+    clients = get(
+        f"{KC_URL}/admin/realms/{REALM}/clients?clientId={urllib.parse.quote(CLIENT_ID)}", token
+    )
+    client = next((c for c in clients if c.get("clientId") == CLIENT_ID), None)
+    if not client:
+        print(f"  Warning: client '{CLIENT_ID}' not found", flush=True)
+        return
+    attrs = client.get("attributes") or {}
+    if attrs.get("pkce.code.challenge.method") == "S256":
+        print(f"  {CLIENT_ID}: PKCE S256 already enforced", flush=True)
+        return
+    attrs["pkce.code.challenge.method"] = "S256"
+    status, _ = put_body(
+        f"{KC_URL}/admin/realms/{REALM}/clients/{client['id']}",
+        {**client, "attributes": attrs},
+        token=token,
+    )
+    if status in (200, 204):
+        print(f"  {CLIENT_ID}: PKCE S256 enforcement enabled", flush=True)
+    else:
+        print(f"  Warning: set PKCE on {CLIENT_ID} returned {status}", flush=True)
+
+
+# ── Browser - SuperAdmin only flow ───────────────────────────────────────────
+
+SUPERADMIN_FLOW_ALIAS = "Browser - SuperAdmin only"
+SUPERADMIN_CLIENT_ID  = "autom-superadmin"
+
+
+def setup_superadmin_browser_flow(token):
+    """
+    Creates a 'Browser - SuperAdmin only' KC authentication flow that denies
+    login to any user who does NOT have the 'super-admin' realm role.
+
+    Flow structure (copy of browser):
+      Cookie (ALTERNATIVE)
+      Identity Provider Redirector (ALTERNATIVE)
+      forms subflow (ALTERNATIVE)
+        Username Password Form (REQUIRED)
+        2FA conditional (CONDITIONAL)
+        Role gate (CONDITIONAL)                 ← blocks non-super-admins
+          Condition - user role (REQUIRED)      ← condUserRole=super-admin, negate=true
+          Deny access (REQUIRED)
+
+    Then binds the flow as a browser-flow override on the autom-superadmin client.
+    """
+    flows = get(f"{KC_URL}/admin/realms/{REALM}/authentication/flows", token)
+    if not any(f.get("alias") == SUPERADMIN_FLOW_ALIAS for f in flows):
+        status, _ = post(
+            f"{KC_URL}/admin/realms/{REALM}/authentication/flows/browser/copy",
+            {"newName": SUPERADMIN_FLOW_ALIAS},
+            token=token,
+        )
+        if status not in (200, 201):
+            print(f"  Warning: copy browser flow for super-admin returned {status}", flush=True)
+            return
+        print(f"  Copied 'browser' → '{SUPERADMIN_FLOW_ALIAS}'", flush=True)
+    else:
+        print(f"  Flow '{SUPERADMIN_FLOW_ALIAS}' already exists – verifying role gate", flush=True)
+
+    encoded_alias = urllib.parse.quote(SUPERADMIN_FLOW_ALIAS, safe="")
+    execs_url = f"{KC_URL}/admin/realms/{REALM}/authentication/flows/{encoded_alias}/executions"
+    execs = get(execs_url, token)
+
+    # Locate the forms subflow.
+    forms_name = next(
+        (e.get("displayName") for e in execs
+         if "forms" in (e.get("displayName") or "").lower()
+         and e.get("level") == 0 and e.get("authenticationFlow")),
+        None,
+    )
+    if not forms_name:
+        print("  Warning: could not find forms subflow in super-admin flow", flush=True)
+        return
+    forms_alias = urllib.parse.quote(forms_name, safe="")
+
+    # Add a Role gate (CONDITIONAL subflow) inside the forms subflow if missing.
+    has_role_gate = any(
+        (e.get("displayName") or "").lower() == "role gate" and e.get("level") == 1
+        for e in execs
+    )
+    if not has_role_gate:
+        status, _ = post(
+            f"{KC_URL}/admin/realms/{REALM}/authentication/flows/{forms_alias}/executions/flow",
+            {"alias": "Role gate", "description": "", "type": "basic-flow", "provider": "registration-page-form"},
+            token=token,
+        )
+        if status in (200, 201):
+            print("  Created 'Role gate' subflow", flush=True)
+        else:
+            print(f"  Warning: create Role gate returned {status}", flush=True)
+            return
+
+    # Set the Role gate to CONDITIONAL.
+    execs = get(execs_url, token)
+    role_gate = next(
+        (e for e in execs
+         if (e.get("displayName") or "").lower() == "role gate" and e.get("level") == 1),
+        None,
+    )
+    if role_gate and role_gate.get("requirement") != "CONDITIONAL":
+        role_gate["requirement"] = "CONDITIONAL"
+        put_body(execs_url, role_gate, token=token)
+        print("  Role gate set to CONDITIONAL", flush=True)
+
+    # Inside Role gate: add conditional-user-role and deny-access if missing.
+    role_gate_name = role_gate["displayName"] if role_gate else "Role gate"
+    role_gate_alias = urllib.parse.quote(role_gate_name, safe="")
+
+    def _add_to_role_gate(provider_id, label):
+        execs = get(execs_url, token)
+        if any(e.get("providerId") == provider_id and e.get("level") == 2 for e in execs):
+            print(f"  {label} already in Role gate", flush=True)
+            return
+        status, _ = post(
+            f"{KC_URL}/admin/realms/{REALM}/authentication/flows/{role_gate_alias}/executions/execution",
+            {"provider": provider_id},
+            token=token,
+        )
+        if status in (200, 201):
+            print(f"  Added {label} to Role gate", flush=True)
+        else:
+            print(f"  Warning: add {label} returned {status}", flush=True)
+
+    _add_to_role_gate("conditional-user-role", "Condition - user role")
+    _add_to_role_gate("deny-access-authenticator", "Deny access")
+
+    # Set both to REQUIRED.
+    execs = get(execs_url, token)
+    for e in execs:
+        if e.get("providerId") in ("conditional-user-role", "deny-access-authenticator") \
+                and e.get("level") == 2 and e.get("requirement") != "REQUIRED":
+            e["requirement"] = "REQUIRED"
+            put_body(execs_url, e, token=token)
+            print(f"  Set {e['providerId']} → REQUIRED", flush=True)
+
+    # Configure conditional-user-role: super-admin with NEGATIVE logic
+    # (deny users who do NOT have the super-admin role).
+    execs = get(execs_url, token)
+    cond_exec = next(
+        (e for e in execs if e.get("providerId") == "conditional-user-role" and e.get("level") == 2),
+        None,
+    )
+    if cond_exec:
+        existing_cfg_id = cond_exec.get("authenticationConfig")
+        if not existing_cfg_id:
+            status, _ = post(
+                f"{KC_URL}/admin/realms/{REALM}/authentication/executions/{cond_exec['id']}/config",
+                {"alias": "super-admin-only", "config": {"condUserRole": "super-admin", "negate": "true"}},
+                token=token,
+            )
+            if status in (200, 201):
+                print("  Configured role gate: condUserRole=super-admin, negate=true", flush=True)
+            else:
+                print(f"  Warning: configure role gate returned {status}", flush=True)
+        else:
+            status, _ = put_body(
+                f"{KC_URL}/admin/realms/{REALM}/authentication/config/{existing_cfg_id}",
+                {"alias": "super-admin-only", "config": {"condUserRole": "super-admin", "negate": "true"}},
+                token=token,
+            )
+            if status in (200, 204):
+                print("  Updated role gate config", flush=True)
+
+    # Bind the flow as a browser-flow override on the autom-superadmin client.
+    clients = get(
+        f"{KC_URL}/admin/realms/{REALM}/clients?clientId={urllib.parse.quote(SUPERADMIN_CLIENT_ID)}", token
+    )
+    sa_client = next((c for c in clients if c.get("clientId") == SUPERADMIN_CLIENT_ID), None)
+    if not sa_client:
+        print(f"  Warning: '{SUPERADMIN_CLIENT_ID}' client not found – flow created but not bound", flush=True)
+        return
+
+    flows = get(f"{KC_URL}/admin/realms/{REALM}/authentication/flows", token)
+    flow_id = next((f["id"] for f in flows if f.get("alias") == SUPERADMIN_FLOW_ALIAS), None)
+    if not flow_id:
+        print("  Warning: could not read back flow ID", flush=True)
+        return
+
+    overrides = sa_client.get("authenticationFlowBindingOverrides") or {}
+    if overrides.get("browser") == flow_id:
+        print(f"  '{SUPERADMIN_CLIENT_ID}' already bound to '{SUPERADMIN_FLOW_ALIAS}'", flush=True)
+        return
+
+    overrides["browser"] = flow_id
+    status, _ = put_body(
+        f"{KC_URL}/admin/realms/{REALM}/clients/{sa_client['id']}",
+        {**sa_client, "authenticationFlowBindingOverrides": overrides},
+        token=token,
+    )
+    if status in (200, 204):
+        print(f"  Bound '{SUPERADMIN_FLOW_ALIAS}' to '{SUPERADMIN_CLIENT_ID}' client", flush=True)
+    else:
+        print(f"  Warning: bind flow to client returned {status}", flush=True)
+
+
 # ── Required-action helpers ───────────────────────────────────────────────────
 
 def enable_required_action(token, alias, label, default=False):
@@ -532,38 +1095,20 @@ def main():
 
     # ── Ensure roles exist ────────────────────────────────────────────────
     print("\nEnsuring realm roles …", flush=True)
-    ensure_realm_role(token, "super-admin",
-                      "System-wide super administrator")
-    ensure_realm_role(token, "user",
-                      "Regular project member")
+    ensure_realm_role(token, "super-admin", "System-wide super administrator; super-admin portal only")
+    ensure_realm_role(token, "owner", "Organization owner")
+    ensure_realm_role(token, "org-admin", "Organization administrator")
+    ensure_realm_role(token, "project-admin", "Project administrator")
+    ensure_realm_role(token, "project-member", "Project member")
 
-    # ── Create demo users ─────────────────────────────────────────────────
-    print("\nCreating demo users …", flush=True)
-    create_user(token, "alice", "alice@example.com", "Alice", "Admin",   "alice123")
-    create_user(token, "bob",   "bob@example.com",   "Bob",   "OrgAdm",  "bob123")
-    create_user(token, "carol", "carol@example.com", "Carol", "ProjAdm", "carol123")
-    create_user(token, "dave",  "dave@example.com",  "Dave",  "User",    "dave123")
-
-    alice_id = get_user_id(token, "alice")
-    bob_id   = get_user_id(token, "bob")
-    carol_id = get_user_id(token, "carol")
-    dave_id  = get_user_id(token, "dave")
-
-    # ── Assign realm roles ────────────────────────────────────────────────
-    print("\nAssigning realm roles …", flush=True)
-    super_admin_role = get_realm_role(token, "super-admin")
-    user_role        = get_realm_role(token, "user")
-
-    assign_realm_roles(token, alice_id, [super_admin_role])   # alice = super-admin
-    assign_realm_roles(token, bob_id,   [user_role])          # bob   = user + org-admin via group
-    assign_realm_roles(token, carol_id, [user_role])          # carol = user + project-admin via group
-    assign_realm_roles(token, dave_id,  [user_role])          # dave  = regular user
-    print("  Realm roles assigned.", flush=True)
-
-    # ── Force TOTP setup for all demo users ───────────────────────────────
-    print("\nForcing TOTP setup for demo users …", flush=True)
-    for uid, uname in [(alice_id, "alice"), (bob_id, "bob"), (carol_id, "carol"), (dave_id, "dave")]:
-        force_required_action(token, uid, uname, "CONFIGURE_TOTP")
+    # Native Organizations own the login-time org picker and emit the signed
+    # `organization` claim. Realm groups below remain only as legacy project
+    # hierarchy data for the POC; they are not used to authorize org access.
+    print("\nEnabling native Keycloak Organizations …", flush=True)
+    enable_organizations(token)
+    for org in ("org-alpha", "org-beta", "org-gamma"):
+        ensure_organization(token, org.replace("-", " ").title(), org)
+    add_organization_scope_to_client(token, CLIENT_ID)
 
     # ── Fetch / ensure group tree ─────────────────────────────────────────
     print("\nBuilding org/project group tree …", flush=True)
@@ -607,55 +1152,6 @@ def main():
             print(f"  WARNING – group not found: {path}", flush=True)
         return g
 
-    # ── alice – super admin, member of ALL orgs + projects ─────────────
-    print("\nAssigning alice to all orgs/projects …", flush=True)
-    alice_paths = [
-        "/org-alpha", "/org-alpha/admins",
-        "/org-alpha/project-1", "/org-alpha/project-1/admins",
-        "/org-alpha/project-2", "/org-alpha/project-2/admins",
-        "/org-beta",  "/org-beta/admins",
-        "/org-beta/project-3",  "/org-beta/project-3/admins",
-        "/org-gamma", "/org-gamma/admins",
-        "/org-gamma/project-4", "/org-gamma/project-4/admins",
-        "/org-gamma/project-5", "/org-gamma/project-5/admins",
-    ]
-    for path in alice_paths:
-        g = gid(path)
-        if g:
-            assign_group(token, alice_id, g)
-
-    # ── bob – org admin of org-alpha, member of project-1 ─────────────
-    print("Assigning bob …", flush=True)
-    bob_paths = [
-        "/org-alpha", "/org-alpha/admins",
-        "/org-alpha/project-1",
-    ]
-    for path in bob_paths:
-        g = gid(path)
-        if g:
-            assign_group(token, bob_id, g)
-
-    # ── carol – project admin of org-beta/project-3 ───────────────────
-    print("Assigning carol …", flush=True)
-    carol_paths = [
-        "/org-beta", "/org-beta/project-3", "/org-beta/project-3/admins",
-    ]
-    for path in carol_paths:
-        g = gid(path)
-        if g:
-            assign_group(token, carol_id, g)
-
-    # ── dave – regular user in org-alpha + org-gamma ──────────────────
-    print("Assigning dave …", flush=True)
-    dave_paths = [
-        "/org-alpha", "/org-alpha/project-2",
-        "/org-gamma", "/org-gamma/project-4", "/org-gamma/project-5",
-    ]
-    for path in dave_paths:
-        g = gid(path)
-        if g:
-            assign_group(token, dave_id, g)
-
     # ── Identity Providers (SSO) ──────────────────────────────────────────
     print("\nConfiguring Identity Providers …", flush=True)
     if GOOGLE_CLIENT_ID and GOOGLE_SECRET:
@@ -685,6 +1181,22 @@ def main():
     print("\nHardening app-client (webOrigins, audience mapper) …", flush=True)
     configure_client_security(token)
 
+    # ── Autom custom browser flow (org + project selector) ───────────────
+    print("\nSetting up Autom post-password org/project browser flow …", flush=True)
+    setup_autom_browser_flow(token)
+
+    print("\nAdding project_id token mapper …", flush=True)
+    add_project_mapper(token)
+
+    print("\nEnforcing PKCE S256 on autom-app …", flush=True)
+    configure_autom_app_pkce(token)
+
+    print("\nSetting up Browser-SuperAdmin-only auth flow …", flush=True)
+    setup_superadmin_browser_flow(token)
+
+    # ── Demo users ───────────────────────────────────────────────────────
+    setup_demo_users(token, groups)
+
     # ── Modern Authenticators ─────────────────────────────────────────────
     print("\nEnabling modern authenticators …", flush=True)
     enable_required_action(token, "CONFIGURE_TOTP",                 "Configure OTP",                default=True)
@@ -701,17 +1213,7 @@ def main():
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  Keycloak demo data ready!
 
- Demo accounts
- ┌──────┬──────────┬─────────────┬───────────────────────────────────────────┐
- │ User │ Password │ Role        │ Access                                    │
- ├──────┼──────────┼─────────────┼───────────────────────────────────────────┤
- │alice │ alice123 │ super-admin │ All orgs/projects – full system admin     │
- │bob   │ bob123   │ user        │ org-alpha (ORG ADMIN) + project-1 member  │
- │carol │ carol123 │ user        │ org-beta / project-3 (PROJECT ADMIN)      │
- │dave  │ dave123  │ user        │ org-alpha/project-2 + org-gamma           │
- └──────┴──────────┴─────────────┴───────────────────────────────────────────┘
-
- Keycloak admin console: http://localhost:8080  (admin / admin123)
+ Keycloak admin console: http://localhost:8080  (use KEYCLOAK_ADMIN / KEYCLOAK_ADMIN_PASSWORD from your .env)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """, flush=True)
 

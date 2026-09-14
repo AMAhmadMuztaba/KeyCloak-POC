@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   postgres:
     image: postgres:15-alpine
@@ -20,10 +18,14 @@ services:
       - keycloak_net
 
   keycloak:
-    image: quay.io/keycloak/keycloak:24.0.1
+    # Native Organizations (including the server-side organization picker and
+    # the organization JWT claim) is supported in Keycloak 26+.
+    build:
+      context: ./keycloak
+      dockerfile: Dockerfile
     container_name: keycloak
     restart: unless-stopped
-    command: start-dev --import-realm
+    command: start-dev --import-realm --features=organization
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
@@ -31,14 +33,16 @@ services:
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}
-      KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_HTTPS: "false"
+      # start-dev disables hostname enforcement by design (local prototype only).
+      # Do NOT use start-dev in production — switch to `start` and set KC_HOSTNAME
+      # to the actual public hostname with KC_HOSTNAME_STRICT: "true".
       KC_HTTP_ENABLED: "true"
       KC_HTTP_PORT: 8080
     ports:
       - "8080:8080"
     volumes:
       - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      - ./keycloak/themes/autom:/opt/keycloak/themes/autom:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,7 +61,7 @@ services:
     restart: "no"
     environment:
       KC_URL: http://keycloak:8080
-      KC_REALM: app-realm
+      KC_REALM: ${KC_REALM:-autom-realm}
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
@@ -82,8 +86,8 @@ services:
     environment:
       PORT: 4000
       KC_URL: http://keycloak:8080
-      KC_REALM: app-realm
-      KC_CLIENT_ID: app-client
+      KC_REALM: ${KC_REALM:-autom-realm}
+      KC_CLIENT_ID: ${KC_CLIENT_ID:-autom-app}
       KC_ISSUER: http://localhost:8080
       KC_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KC_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}

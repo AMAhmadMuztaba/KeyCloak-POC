@@ -1,7 +1,9 @@
 {
-  "realm": "app-realm",
-  "displayName": "App Realm",
+  "realm": "autom-realm",
+  "displayName": "Autom Realm",
   "enabled": true,
+  "organizationsEnabled": true,
+  "loginTheme": "autom",
   "sslRequired": "external",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,
@@ -35,8 +37,11 @@
 
   "roles": {
     "realm": [
-      { "name": "super-admin", "description": "System-wide super administrator — can create orgs, projects, and roles" },
-      { "name": "user",        "description": "Regular project member" }
+      { "name": "super-admin",    "description": "System-wide super administrator — super-admin portal only" },
+      { "name": "owner",          "description": "Organization owner" },
+      { "name": "org-admin",      "description": "Organization administrator" },
+      { "name": "project-admin",  "description": "Project administrator" },
+      { "name": "project-member", "description": "Project member" }
     ],
     "client": {}
   },
@@ -84,7 +89,7 @@
 
   "clients": [
     {
-      "clientId": "app-client",
+      "clientId": "autom-app",
       "name": "Application Client",
       "rootUrl": "http://localhost:3000",
       "baseUrl": "/",

@@ -1,60 +1,12 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import keycloak from "../keycloak";
 
 const AuthContext = createContext(null);
 
-// ── Parse JWT groups into org/project memberships + admin roles ──────────────
-function parseGroups(groups = []) {
-  const parts = (g) => g.split("/").filter(Boolean);
-
-  // Depth-1 groups = org memberships
-  const orgs = [...new Set(
-    groups.filter(g => parts(g).length === 1).map(g => parts(g)[0])
-  )];
-
-  // Depth-2 groups that are not 'admins' = project memberships
-  const projectsForOrg = (org) =>
-    groups
-      .filter(g => parts(g).length === 2 && parts(g)[0] === org && parts(g)[1] !== "admins")
-      .map(g => parts(g)[1]);
-
-  // Depth-2 'admins' subgroup = org-admin role for that org
-  const orgAdminOf = [...new Set(
-    groups
-      .filter(g => parts(g).length === 2 && parts(g)[1] === "admins")
-      .map(g => parts(g)[0])
-  )];
-
-  // Depth-3 'admins' subgroup = project-admin role for that project
-  const projectAdminOf = groups
-    .filter(g => parts(g).length === 3 && parts(g)[2] === "admins")
-    .map(g => ({ org: parts(g)[0], project: parts(g)[1] }));
-
-  return { orgs, projectsForOrg, orgAdminOf, projectAdminOf };
-}
-
-// ── Provider ──────────────────────────────────────────────────────────────────
 export function AuthProvider({ children }) {
-  const [isLoading, setIsLoading]             = useState(true);
+  const [isLoading,       setIsLoading]       = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [tokenParsed, setTokenParsed]         = useState(null);
-  const [selectedOrg, setSelectedOrg]         = useState(
-    () => sessionStorage.getItem("kc_org") || null
-  );
-  const [selectedProject, setSelectedProject] = useState(
-    () => sessionStorage.getItem("kc_project") || null
-  );
-  const [isAdminMode, setIsAdminMode]         = useState(
-    () => sessionStorage.getItem("kc_admin_mode") === "true"
-  );
+  const [tokenParsed,     setTokenParsed]     = useState(null);
   const initCalled = useRef(false);
 
   useEffect(() => {
@@ -62,49 +14,15 @@ export function AuthProvider({ children }) {
     initCalled.current = true;
 
     keycloak
-      .init({
-        onLoad: "check-sso",
-        silentCheckSsoRedirectUri: `${window.location.origin}/silent-check-sso.html`,
-      })
+      .init({ onLoad: "login-required", pkceMethod: "S256", checkLoginIframe: false })
       .then((authenticated) => {
         setIsAuthenticated(authenticated);
-        if (authenticated) {
-          const tp = keycloak.tokenParsed;
-          setTokenParsed(tp);
-          // M2: Validate restored sessionStorage selection against JWT groups
-          const jwtGroups = tp?.groups || [];
-          const parts = (g) => g.split("/").filter(Boolean);
-          const jwtOrgs = new Set(
-            jwtGroups.filter(g => parts(g).length >= 1).map(g => parts(g)[0])
-          );
-          const storedOrg = sessionStorage.getItem("kc_org");
-          if (storedOrg && !jwtOrgs.has(storedOrg)) {
-            sessionStorage.removeItem("kc_org");
-            sessionStorage.removeItem("kc_project");
-            setSelectedOrg(null);
-            setSelectedProject(null);
-          } else if (storedOrg) {
-            const storedProject = sessionStorage.getItem("kc_project");
-            if (storedProject) {
-              const valid = jwtGroups.some(
-                g => parts(g).length >= 2 && parts(g)[0] === storedOrg && parts(g)[1] === storedProject
-              );
-              if (!valid) {
-                sessionStorage.removeItem("kc_project");
-                setSelectedProject(null);
-              }
-            }
-          }
-        }
+        if (authenticated) setTokenParsed(keycloak.tokenParsed);
       })
       .catch(console.error)
       .finally(() => setIsLoading(false));
 
-    // M1: Keep tokenParsed in sync whenever the token is silently refreshed
-    keycloak.onAuthRefreshSuccess = () => {
-      setTokenParsed({ ...keycloak.tokenParsed });
-    };
-
+    keycloak.onAuthRefreshSuccess = () => setTokenParsed({ ...keycloak.tokenParsed });
     keycloak.onTokenExpired = () => {
       keycloak.updateToken(30).catch(() => {
         setIsAuthenticated(false);
@@ -113,69 +31,15 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const login        = useCallback(() => keycloak.login(), []);
-  const loginWithIdp = useCallback((hint) => keycloak.login({ idpHint: hint }), []);
-  const setupMfa     = useCallback((action) => keycloak.login({ action }), []);
-  const logout = useCallback(() => {
-    sessionStorage.clear();
-    keycloak.logout({ redirectUri: window.location.origin });
-  }, []);
-
-  const selectOrg = useCallback((org) => {
-    setSelectedOrg(org);
-    setSelectedProject(null);
-    setIsAdminMode(false);
-    sessionStorage.setItem("kc_org", org);
-    sessionStorage.removeItem("kc_project");
-    sessionStorage.removeItem("kc_admin_mode");
-  }, []);
-
-  const selectProject = useCallback((project) => {
-    setSelectedProject(project);
-    setIsAdminMode(false);
-    sessionStorage.setItem("kc_project", project);
-    sessionStorage.removeItem("kc_admin_mode");
-  }, []);
-
-  const enterAdminMode = useCallback(() => {
-    setIsAdminMode(true);
-    setSelectedProject(null);
-    sessionStorage.setItem("kc_admin_mode", "true");
-    sessionStorage.removeItem("kc_project");
-  }, []);
-
-  const { orgs, projectsForOrg, orgAdminOf, projectAdminOf } = useMemo(
-    () => parseGroups(tokenParsed?.groups),
-    [tokenParsed]
+  const logout = useCallback(
+    () => keycloak.logout({ redirectUri: window.location.origin }),
+    []
   );
 
   const isSuperAdmin = useMemo(
     () => (tokenParsed?.realm_access?.roles || []).includes("super-admin"),
     [tokenParsed]
   );
-
-  const isOrgAdminOf = useCallback(
-    (org) => isSuperAdmin || orgAdminOf.includes(org),
-    [isSuperAdmin, orgAdminOf]
-  );
-
-  const isProjectAdminOf = useCallback(
-    (org, project) =>
-      isSuperAdmin ||
-      orgAdminOf.includes(org) ||
-      projectAdminOf.some(p => p.org === org && p.project === project),
-    [isSuperAdmin, orgAdminOf, projectAdminOf]
-  );
-
-  // Which admin dashboard to navigate to when "Skip" is clicked
-  const getAdminRoute = useCallback(() => {
-    if (isSuperAdmin)        return "/super-admin";
-    if (orgAdminOf.length)   return "/org-admin";
-    if (projectAdminOf.length) return "/project-admin";
-    return "/dashboard";
-  }, [isSuperAdmin, orgAdminOf, projectAdminOf]);
-
-  const hasAnyAdminRole = isSuperAdmin || orgAdminOf.length > 0 || projectAdminOf.length > 0;
 
   const user = useMemo(
     () =>
@@ -191,36 +55,11 @@ export function AuthProvider({ children }) {
     [tokenParsed]
   );
 
-  const value = {
-    isLoading,
-    isAuthenticated,
-    user,
-    // roles
-    isSuperAdmin,
-    orgAdminOf,
-    projectAdminOf,
-    isOrgAdminOf,
-    isProjectAdminOf,
-    hasAnyAdminRole,
-    getAdminRoute,
-    // groups
-    orgs,
-    projectsForOrg,
-    // selection state
-    selectedOrg,
-    selectedProject,
-    isAdminMode,
-    // actions
-    login,
-    loginWithIdp,
-    setupMfa,
-    logout,
-    selectOrg,
-    selectProject,
-    enterAdminMode,
-  };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ isLoading, isAuthenticated, isSuperAdmin, user, logout }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export const useAuth = () => {

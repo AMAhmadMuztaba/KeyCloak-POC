@@ -1,0 +1,3 @@
+com.selise.autom.keycloak.PostPasswordOrganizationSelectorAuthenticatorFactory
+com.selise.autom.keycloak.PostOrgProjectSelectorAuthenticatorFactory
+com.selise.autom.keycloak.AutomAlwaysTrueConditionFactory
