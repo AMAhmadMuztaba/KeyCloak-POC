@@ -1,5 +1,6 @@
 com\selise\autom\keycloak\AutomAlwaysTrueCondition.class
 com\selise\autom\keycloak\PostPasswordOrganizationSelectorAuthenticatorFactory.class
+com\selise\autom\keycloak\AutomRoleResolver.class
 com\selise\autom\keycloak\PostPasswordOrganizationSelectorAuthenticator.class
 com\selise\autom\keycloak\AutomProjectSwitchResource.class
 com\selise\autom\keycloak\AutomAlwaysTrueConditionFactory.class

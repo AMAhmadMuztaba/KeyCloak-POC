@@ -30,6 +30,16 @@ public final class PostPasswordOrganizationSelectorAuthenticator implements Auth
     static final String ID = "autom-post-password-org-selector";
     /** Stable token claim source; unlike KC's native organization scope this is refresh-safe. */
     static final String ACTIVE_ORGANIZATION_ID_NOTE = "autom.organization.id";
+    /**
+     * The org's alias (e.g. "test-3"), refresh-safe like {@link #ACTIVE_ORGANIZATION_ID_NOTE}.
+     * KC's native {@code organization} claim carries the alias too, but only the one
+     * requested at original login — it does not follow an in-session org switch
+     * (Keycloak refresh tokens can't silently re-scope to a different org). This note
+     * is updated by {@link AutomProjectSwitchResource} on every switch, giving the
+     * frontend a reliable alias source for building the next login/silent-check's
+     * {@code organization:<alias>} scope hint (see requestedOidcScope() in main.tsx).
+     */
+    static final String ACTIVE_ORGANIZATION_ALIAS_NOTE = "autom.organization.alias";
 
     @Override
     public void authenticate(AuthenticationFlowContext context) {
@@ -134,6 +144,7 @@ public final class PostPasswordOrganizationSelectorAuthenticator implements Auth
         // sessions — without it the cookie check falls through to the org picker on every refresh.
         context.getAuthenticationSession().setUserSessionNote(OrganizationModel.ORGANIZATION_ATTRIBUTE, organization.getId());
         context.getAuthenticationSession().setUserSessionNote(ACTIVE_ORGANIZATION_ID_NOTE, organization.getId());
+        context.getAuthenticationSession().setUserSessionNote(ACTIVE_ORGANIZATION_ALIAS_NOTE, organization.getAlias());
         // Request-scoped context: used within this authentication request only.
         context.getSession().getContext().setOrganization(organization);
     }

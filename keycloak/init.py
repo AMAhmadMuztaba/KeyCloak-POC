@@ -635,8 +635,11 @@ def setup_autom_browser_flow(token):
 
 def add_project_mapper(token):
     """
-    Adds a User Session Note mapper to the autom-app client so that the selected
-    project group ID appears as 'project_id' in the access token.
+    Adds User Session Note mappers to the autom-app client: the selected
+    project group ID ('project_id'), its name ('project_name'), the active
+    organization ('autom_organization_id'), and the caller's resolved
+    org/project role ('active_role') — all kept current on every org/project
+    switch by the custom Keycloak provider, without a login redirect.
     """
     clients = get(
         f"{KC_URL}/admin/realms/{REALM}/clients?clientId={urllib.parse.quote(CLIENT_ID)}", token
@@ -653,6 +656,22 @@ def add_project_mapper(token):
         ("autom-project-id", "autom.project.group.id", "project_id"),
         ("autom-project-name", "autom.project.name", "project_name"),
         ("autom-active-organization-id", "autom.organization.id", "autom_organization_id"),
+        # Set by AutomRoleResolver (PostOrgProjectSelectorAuthenticator at login,
+        # AutomProjectSwitchResource on every switch) from Keycloak group
+        # membership: org-admin (/{org}/admins or legacy /owners), project-admin
+        # (/{org}/{project}/admins), or project-member (plain /{org}/{project}).
+        # Cannot distinguish "owner" from "org-admin" — that split only exists in
+        # the business backend's own OrgMember.OrgRole field, which already
+        # treats them identically for permissions.
+        ("autom-active-role", "autom.active.role", "active_role"),
+        # KC's own native `organization` claim only reflects the alias requested
+        # at ORIGINAL login (organization:<alias> scope) — a refresh token can't
+        # silently re-scope to a different org, so it goes stale after an
+        # in-session org switch. This note is kept current on every switch by
+        # AutomProjectSwitchResource, giving the frontend a reliable alias for
+        # building the next login/silent-check's scope hint (see
+        # requestedOidcScope() / rememberOrganizationAlias() in main.tsx).
+        ("autom-organization-alias", "autom.organization.alias", "organization_alias"),
     ]
     for name, note, claim in mappings:
         if any(m.get("config", {}).get("user.session.note") == note for m in existing):
@@ -756,9 +775,14 @@ def _build_security_headers():
     heredoc quoting (which strips literal single quotes from the script body).
     """
     q = chr(39)
+    # A host-source with no port (https://*.seliselocal.com) only matches the
+    # scheme's DEFAULT port (443) per the CSP spec — it silently excludes local
+    # dev origins like automation.inb.seliselocal.com:5173, blocking the silent
+    # check-sso iframe with a frame-ancestors violation. The :* variant is the
+    # same wildcard-port treatment already given to the localhost entries.
     csp = (
         f"frame-src {q}self{q}; "
-        f"frame-ancestors {q}self{q} https://*.seliselocal.com "
+        f"frame-ancestors {q}self{q} https://*.seliselocal.com https://*.seliselocal.com:* "
         f"http://localhost:* https://localhost:*; "
         f"object-src {q}none{q};"
     )

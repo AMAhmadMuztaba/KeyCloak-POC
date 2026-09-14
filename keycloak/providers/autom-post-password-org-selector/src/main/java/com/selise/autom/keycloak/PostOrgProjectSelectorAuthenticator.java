@@ -76,7 +76,7 @@ public final class PostOrgProjectSelectorAuthenticator implements Authenticator 
                     .findFirst()
                     .orElse(null);
             if (hinted != null) {
-                selectProject(context, hinted);
+                selectProject(context, org, hinted);
                 context.success();
                 return;
             }
@@ -120,7 +120,7 @@ public final class PostOrgProjectSelectorAuthenticator implements Authenticator 
             return;
         }
 
-        selectProject(context, selected);
+        selectProject(context, org, selected);
         context.success();
     }
 
@@ -181,7 +181,7 @@ public final class PostOrgProjectSelectorAuthenticator implements Authenticator 
         return value == null ? "" : value.replaceAll("[^A-Za-z0-9]", "").toLowerCase(java.util.Locale.ROOT);
     }
 
-    private void selectProject(AuthenticationFlowContext context, GroupModel project) {
+    private void selectProject(AuthenticationFlowContext context, OrganizationModel org, GroupModel project) {
         // Auth note: available within this request's authentication flow.
         context.getAuthenticationSession().setAuthNote(PROJECT_ID_NOTE, project.getId());
         // Client note: persisted in the client session after auth completes.
@@ -190,6 +190,23 @@ public final class PostOrgProjectSelectorAuthenticator implements Authenticator 
         // Use KC's built-in "User Session Note" protocol mapper to surface these in the token.
         context.getAuthenticationSession().setUserSessionNote(PROJECT_ID_NOTE, project.getId());
         context.getAuthenticationSession().setUserSessionNote(PROJECT_NAME_NOTE, project.getName());
+
+        // Resolve the role for this org/project from the same group data used
+        // to decide access, so the very first token already carries it —
+        // AutomProjectSwitchResource keeps it current on every later switch.
+        GroupModel orgGroup = context.getRealm().getTopLevelGroupsStream()
+                .filter(g -> matchesOrg(g, org))
+                .findFirst()
+                .orElse(null);
+        if (orgGroup != null) {
+            Set<String> userGroupIds = context.getUser().getGroupsStream()
+                    .map(GroupModel::getId)
+                    .collect(Collectors.toSet());
+            String role = AutomRoleResolver.resolve(orgGroup, project, userGroupIds);
+            if (role != null) {
+                context.getAuthenticationSession().setUserSessionNote(AutomRoleResolver.ACTIVE_ROLE_NOTE, role);
+            }
+        }
     }
 
     private void showPicker(

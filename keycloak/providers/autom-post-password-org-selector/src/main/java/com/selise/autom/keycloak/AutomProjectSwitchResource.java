@@ -150,8 +150,13 @@ public class AutomProjectSwitchResource {
         // The initializer maps these server-side notes to signed JWT claims.
         userSession.setNote(OrganizationModel.ORGANIZATION_ATTRIBUTE, org.getId());
         userSession.setNote(PostPasswordOrganizationSelectorAuthenticator.ACTIVE_ORGANIZATION_ID_NOTE, org.getId());
+        userSession.setNote(PostPasswordOrganizationSelectorAuthenticator.ACTIVE_ORGANIZATION_ALIAS_NOTE, org.getAlias());
         userSession.setNote(PostOrgProjectSelectorAuthenticator.PROJECT_ID_NOTE, projectGroup.getId());
         userSession.setNote(PostOrgProjectSelectorAuthenticator.PROJECT_NAME_NOTE, projectGroup.getName());
+        String role = AutomRoleResolver.resolve(orgGroup, projectGroup, userGroupIds);
+        if (role != null) {
+            userSession.setNote(AutomRoleResolver.ACTIVE_ROLE_NOTE, role);
+        }
 
         return corsOk(Response.noContent(), origin).build();
     }
@@ -208,9 +213,13 @@ public class AutomProjectSwitchResource {
 
     private static boolean isAllowedOrigin(String origin) {
         if (origin == null) return false;
+        // [a-zA-Z0-9-]+ (no dot) only matches a SINGLE label before .seliselocal.com —
+        // it never matched a multi-label host like automation.inb.seliselocal.com or
+        // even production's automation-v2.inb.seliselocal.com, and had no port group
+        // at all, so a non-default port (local dev's :5173) never matched either.
         return origin.equals("http://localhost:5173")
                 || origin.equals("http://localhost:3000")
-                || origin.matches("https://[a-zA-Z0-9-]+\\.seliselocal\\.com");
+                || origin.matches("https://[a-zA-Z0-9.-]+\\.seliselocal\\.com(:\\d+)?");
     }
 
     /** Legacy group names often use '_' while KC organization aliases use '-'. */
