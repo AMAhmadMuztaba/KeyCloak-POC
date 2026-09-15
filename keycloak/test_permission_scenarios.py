@@ -24,6 +24,7 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.parse
@@ -37,8 +38,18 @@ CLIENT_ID = "autom-app"
 REDIRECT_URI = "https://automation.inb.seliselocal.com:5173/"
 API_URL = "http://localhost:5000"
 
-SUPERADMIN_USERNAME = "alice"
-SUPERADMIN_PASSWORD = "VerifyTest#2026"
+# All credentials below are read from the environment — nothing here is a
+# real secret. Set these before running (values fixed for repeatable test
+# runs across the fixture accounts these scripts create/reuse):
+#   KC_MASTER_ADMIN_USERNAME / KC_MASTER_ADMIN_PASSWORD — realm "master" admin-cli login
+#   KC_SUPERADMIN_USERNAME / KC_SUPERADMIN_PASSWORD      — demo super-admin account (alice)
+#   KC_ORG_ADMIN_TEST_EMAIL / KC_ORG_ADMIN_TEST_PASSWORD — pre-existing org-admin fixture
+#   KC_TEST_FIXTURE_PASSWORD                             — shared password for the
+#       project-member/project-admin/dual-role fixture accounts this script creates
+MASTER_ADMIN_USERNAME = os.environ["KC_MASTER_ADMIN_USERNAME"]
+MASTER_ADMIN_PASSWORD = os.environ["KC_MASTER_ADMIN_PASSWORD"]
+SUPERADMIN_USERNAME = os.environ.get("KC_SUPERADMIN_USERNAME", "alice")
+SUPERADMIN_PASSWORD = os.environ["KC_SUPERADMIN_PASSWORD"]
 
 # ── Realm fixtures (Test_3 / test_4 orgs, p3/p5 projects under Test_3) ──────
 ORG_TEST3_MONGO_ID = "4635a725-3035-45cf-a9bc-ef7337760d96"   # Organization.ItemId == KC top group id
@@ -50,10 +61,11 @@ PROJECT_P5_ID = "17e66a0a-7564-4034-8e48-866e3eb3d387"
 PROJECT_P4_ID = "fbc583df-f4be-445c-9c18-568a42519a84"
 
 # ── Test accounts (created by --setup; passwords fixed for repeatable runs) ──
-ORG_ADMIN_USER = ("11-09-2026@yopmail.com", "#Selise123456")           # pre-existing; org-admin in Test_3, plain member of test_4
-PROJECT_MEMBER_USER = ("verify-project-member@example.com", "VerifyTest#2026")   # project-member on p5
-PROJECT_ADMIN_USER = ("verify-project-admin2@example.com", "VerifyTest#2026")    # project-admin on p5
-DUAL_ROLE_USER = ("verify-dual-role@example.com", "VerifyTest#2026")            # project-admin on p5 + project-member on p3 (until promoted to org-admin by test 9)
+_TEST_FIXTURE_PASSWORD = os.environ.get("KC_TEST_FIXTURE_PASSWORD", SUPERADMIN_PASSWORD)
+ORG_ADMIN_USER = (os.environ["KC_ORG_ADMIN_TEST_EMAIL"], os.environ["KC_ORG_ADMIN_TEST_PASSWORD"])  # pre-existing; org-admin in Test_3, plain member of test_4
+PROJECT_MEMBER_USER = ("verify-project-member@example.com", _TEST_FIXTURE_PASSWORD)   # project-member on p5
+PROJECT_ADMIN_USER = ("verify-project-admin2@example.com", _TEST_FIXTURE_PASSWORD)    # project-admin on p5
+DUAL_ROLE_USER = ("verify-dual-role@example.com", _TEST_FIXTURE_PASSWORD)            # project-admin on p5 + project-member on p3 (until promoted to org-admin by test 9)
 
 PASS, FAIL = "PASS", "FAIL"
 _results = []
@@ -114,7 +126,7 @@ def get_admin_token():
         f"{KC_URL}/realms/master/protocol/openid-connect/token",
         data=urllib.parse.urlencode({
             "grant_type": "password", "client_id": "admin-cli",
-            "username": "selise-autom", "password": "***REDACTED-ROTATE-THIS-CREDENTIAL***",
+            "username": MASTER_ADMIN_USERNAME, "password": MASTER_ADMIN_PASSWORD,
         }).encode(),
         method="POST",
     )

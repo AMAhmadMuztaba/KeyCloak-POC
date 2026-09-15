@@ -8,12 +8,17 @@ silent auto-configure).
 """
 import base64
 import json
+import os
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 
 from test_permission_scenarios import login_superadmin
+
+# Set KC_SUPERADMIN_USERNAME/KC_SUPERADMIN_PASSWORD before running.
+SUPERADMIN_USERNAME = os.environ.get("KC_SUPERADMIN_USERNAME", "alice")
+SUPERADMIN_PASSWORD = os.environ["KC_SUPERADMIN_PASSWORD"]
 
 KC_URL = "https://keycloak.inb.seliselocal.com"
 KC_ADMIN_URL = "http://172.16.2.42:8080"
@@ -69,7 +74,7 @@ def main():
     print(f"  autom_organization_id: {claims.get('autom_organization_id')}")
     print(f"  project_id: {claims.get('project_id')}")
 
-    admin_token = login_superadmin("alice", "VerifyTest#2026")["access_token"]
+    admin_token = login_superadmin(SUPERADMIN_USERNAME, SUPERADMIN_PASSWORD)["access_token"]
     code, user = kc_admin_request("GET", f"/admin/realms/{REALM}/users/{USER_ID}", admin_token)
     print(f"\n[INFO] Post-skip requiredActions: {user.get('requiredActions')}")
     ok = user.get("requiredActions") == []

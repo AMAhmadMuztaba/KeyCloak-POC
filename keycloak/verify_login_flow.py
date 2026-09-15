@@ -21,7 +21,7 @@ Optionally also re-checks the .NET backend (/api/organizations,
 
 Usage:
   python verify_login_flow.py \\
-      --username 11-09-2026@yopmail.com --password '#Selise123456' \\
+      --username you@example.com --password '<password>' \\
       --org test-3 --project p3 \\
       --switch-org test-4 --switch-project p4 \\
       --api-url http://localhost:5000
