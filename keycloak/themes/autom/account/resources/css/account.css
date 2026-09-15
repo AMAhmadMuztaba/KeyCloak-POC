@@ -1,0 +1,76 @@
+/*
+ * Autom brand reskin for the Account Console (Keycloak's built-in `keycloak.v3`
+ * React/PatternFly app). We can't fork that React bundle, so this works the
+ * supported way: override PatternFly v5's CSS custom properties (which every
+ * PF component already reads) plus a couple of direct rules for things PF
+ * doesn't expose as variables (fonts, the header brand mark).
+ *
+ * Tokens mirror l3-react-autom-business's neo-linear.css so this console
+ * reads as the same product as the rest of the portal.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600&family=Instrument+Sans:wght@400;500&display=swap');
+
+:root,
+.pf-v5-theme-dark {
+  --pf-v5-global--primary-color--100: #0446F1;
+  --pf-v5-global--primary-color--200: #0338CB;
+  --pf-v5-global--primary-color--light-100: #EFF3F6;
+
+  --pf-v5-global--link--Color: #0446F1;
+  --pf-v5-global--link--Color--hover: #0338CB;
+
+  --pf-v5-global--BackgroundColor--100: #FDFDFE;
+  --pf-v5-global--BackgroundColor--150: #FFFFFF;
+  --pf-v5-global--BackgroundColor--200: #EFF3F6;
+
+  --pf-v5-global--Color--100: #070B0E;
+  --pf-v5-global--Color--200: #4C5870;
+
+  --pf-v5-global--BorderColor--100: rgba(22, 36, 67, 0.14);
+  --pf-v5-global--BorderColor--200: rgba(22, 36, 67, 0.10);
+
+  --pf-v5-global--danger-color--100: #DC2626;
+  --pf-v5-global--success-color--100: #16A34A;
+  --pf-v5-global--warning-color--100: #D97706;
+
+  --pf-v5-global--FontFamily--text: 'Instrument Sans', system-ui, 'Segoe UI', Helvetica, sans-serif;
+  --pf-v5-global--FontFamily--heading: 'Bricolage Grotesque', system-ui, sans-serif;
+  --pf-v5-global--FontFamily--sans-serif: 'Instrument Sans', system-ui, 'Segoe UI', Helvetica, sans-serif;
+
+  --pf-v5-global--BorderRadius--sm: 6px;
+  color-scheme: light;
+}
+
+body,
+#app {
+  font-family: var(--pf-v5-global--FontFamily--text);
+  background: var(--pf-v5-global--BackgroundColor--100);
+}
+
+h1, h2, h3, h4,
+.pf-v5-c-title {
+  font-family: var(--pf-v5-global--FontFamily--heading);
+  letter-spacing: -0.02em;
+}
+
+/* Primary buttons/links: PF reads the vars above, these are a fallback in
+   case a component hardcodes its default swatch instead of the var. */
+.pf-v5-c-button.pf-m-primary {
+  background-color: var(--pf-v5-global--primary-color--100);
+}
+.pf-v5-c-button.pf-m-primary:hover {
+  background-color: var(--pf-v5-global--primary-color--200);
+}
+.pf-v5-c-button.pf-m-link {
+  color: var(--pf-v5-global--link--Color);
+}
+
+/* Header brand mark -> Autom logo. PatternFly renders the theme's own
+   properties.logo/logoUrl image here; swapping the bitmap via `content`
+   avoids depending on how the React bundle resolves those two properties. */
+.pf-v5-c-masthead__brand img,
+.pf-v5-c-brand img {
+  content: url('../img/logo-lockup.svg');
+  height: 28px;
+}

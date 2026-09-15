@@ -1,5 +1,10 @@
 D:\AutomNew\KeyCLOAK\keycloak\providers\autom-post-password-org-selector\src\main\java\com\selise\autom\keycloak\AutomAlwaysTrueCondition.java
 D:\AutomNew\KeyCLOAK\keycloak\providers\autom-post-password-org-selector\src\main\java\com\selise\autom\keycloak\AutomAlwaysTrueConditionFactory.java
+D:\AutomNew\KeyCLOAK\keycloak\providers\autom-post-password-org-selector\src\main\java\com\selise\autom\keycloak\AutomJoiningContext.java
+D:\AutomNew\KeyCLOAK\keycloak\providers\autom-post-password-org-selector\src\main\java\com\selise\autom\keycloak\AutomMfaEnforcementAuthenticator.java
+D:\AutomNew\KeyCLOAK\keycloak\providers\autom-post-password-org-selector\src\main\java\com\selise\autom\keycloak\AutomMfaEnforcementAuthenticatorFactory.java
+D:\AutomNew\KeyCLOAK\keycloak\providers\autom-post-password-org-selector\src\main\java\com\selise\autom\keycloak\AutomOnboardingProfile.java
+D:\AutomNew\KeyCLOAK\keycloak\providers\autom-post-password-org-selector\src\main\java\com\selise\autom\keycloak\AutomOptionalTotp.java
 D:\AutomNew\KeyCLOAK\keycloak\providers\autom-post-password-org-selector\src\main\java\com\selise\autom\keycloak\AutomProjectSwitchResource.java
 D:\AutomNew\KeyCLOAK\keycloak\providers\autom-post-password-org-selector\src\main\java\com\selise\autom\keycloak\AutomProjectSwitchResourceProvider.java
 D:\AutomNew\KeyCLOAK\keycloak\providers\autom-post-password-org-selector\src\main\java\com\selise\autom\keycloak\AutomProjectSwitchResourceProviderFactory.java

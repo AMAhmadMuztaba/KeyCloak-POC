@@ -1,11 +1,16 @@
 com\selise\autom\keycloak\AutomAlwaysTrueCondition.class
 com\selise\autom\keycloak\PostPasswordOrganizationSelectorAuthenticatorFactory.class
+com\selise\autom\keycloak\AutomOptionalTotp.class
 com\selise\autom\keycloak\AutomRoleResolver.class
 com\selise\autom\keycloak\PostPasswordOrganizationSelectorAuthenticator.class
+com\selise\autom\keycloak\AutomOnboardingProfile.class
 com\selise\autom\keycloak\AutomProjectSwitchResource.class
 com\selise\autom\keycloak\AutomAlwaysTrueConditionFactory.class
 com\selise\autom\keycloak\PostOrgProjectSelectorAuthenticator.class
 com\selise\autom\keycloak\AutomProjectSwitchResource$SwitchRequest.class
 com\selise\autom\keycloak\PostOrgProjectSelectorAuthenticatorFactory.class
+com\selise\autom\keycloak\AutomMfaEnforcementAuthenticatorFactory.class
+com\selise\autom\keycloak\AutomMfaEnforcementAuthenticator.class
 com\selise\autom\keycloak\AutomProjectSwitchResourceProvider.class
+com\selise\autom\keycloak\AutomJoiningContext.class
 com\selise\autom\keycloak\AutomProjectSwitchResourceProviderFactory.class

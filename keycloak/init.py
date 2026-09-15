@@ -489,6 +489,7 @@ def setup_autom_browser_flow(token):
                        [REQ] autom-condition-always       level 2
                        [REQ] autom-post-password-org-selector level 2
                        [REQ] autom-post-org-project-selector  level 2
+                       [REQ] autom-mfa-enforcement         level 2
                [COND] 2FA conditional               level 1  (from browser copy)
 
     KC 26 rule: CONDITIONAL at TOP level alongside ALTERNATIVE triggers the conflict.
@@ -588,12 +589,13 @@ def setup_autom_browser_flow(token):
     put_body(execs_url, post_auth_exec, token=token)
     print(f"  Set '{POST_AUTH_SUBFLOW_ALIAS}' -> CONDITIONAL", flush=True)
 
-    # 5. Add three providers inside the CONDITIONAL subflow.
+    # 5. Add four providers inside the CONDITIONAL subflow.
     subflow_encoded = urllib.parse.quote(POST_AUTH_SUBFLOW_ALIAS, safe="")
     for provider_id, label in [
         ("autom-condition-always",           "condition (always-true)"),
         ("autom-post-password-org-selector", "org selector"),
         ("autom-post-org-project-selector",  "project selector"),
+        ("autom-mfa-enforcement",            "MFA enforcement (org mfaMandatory)"),
     ]:
         status, _ = post(
             f"{KC_URL}/admin/realms/{REALM}/authentication/flows/{subflow_encoded}/executions/execution",
@@ -605,13 +607,14 @@ def setup_autom_browser_flow(token):
         else:
             print(f"  Warning: add {label} returned {status}", flush=True)
 
-    # 6. Set all three inner executions to REQUIRED.
+    # 6. Set all four inner executions to REQUIRED.
     execs = get(execs_url, token)
     for e in execs:
         pid = e.get("providerId")
         if pid in ("autom-condition-always",
                    "autom-post-password-org-selector",
-                   "autom-post-org-project-selector"):
+                   "autom-post-org-project-selector",
+                   "autom-mfa-enforcement"):
             if e.get("requirement") != "REQUIRED":
                 e["requirement"] = "REQUIRED"
                 put_body(execs_url, e, token=token)
