@@ -1125,6 +1125,116 @@ def setup_superadmin_browser_flow(token):
         print(f"  Warning: bind flow to client returned {status}", flush=True)
 
 
+AUTOM_APP_FLOW_ALIAS = "Browser - AutomApp"
+AUTOM_APP_CLIENT_ID  = "autom-app"
+
+
+def setup_autom_app_browser_flow(token):
+    """
+    Creates a 'Browser - AutomApp' flow (a copy of the realm's actual default
+    browser flow -- whatever `realm.browserFlow` currently points to, e.g. the
+    custom 'autom-post-password-org-browser-v1' org-selector flow, NOT
+    necessarily the stock 'browser' flow) with Cookie DISABLED, and binds it
+    to the autom-app client only.
+
+    Confirmed live, 2026-09-22: autom-app had no authenticationFlowBindingOverrides
+    at all, so it fell back to the realm's shared default browser flow, where
+    Cookie is an ALTERNATIVE ahead of 'forms'. With a super-admin already
+    signed into the OTHER portal in the same browser (sharing the same
+    KEYCLOAK_SESSION cookie across the whole realm), a user submitting THEIR
+    OWN different credentials on autom-app's login form got silently issued a
+    token for the super-admin instead -- the Cookie authenticator succeeded
+    first and 'forms' (and the credentials actually typed) never ran at all.
+    Decoded the resulting JWT to confirm: it carried the super-admin's email
+    and 'super-admin' role despite a different user's credentials being typed
+    and submitted.
+
+    This mirrors setup_superadmin_browser_flow's already-proven fix for the
+    same class of bug in the other direction (a stale business-portal cookie
+    bypassing the super-admin role gate). The realm's SHARED default flow is
+    deliberately left untouched here -- it's also used by Keycloak's own
+    built-in clients (account, account-console, admin-cli, broker,
+    realm-management, security-admin-console), where forcing every page load
+    through interactive credentials instead of Cookie-based SSO would be a
+    real regression. A dedicated copy, bound only to autom-app, fixes this
+    portal's collision without touching any of that.
+
+    With Cookie disabled here, two different accounts genuinely cannot be
+    signed in simultaneously in two tabs of the same browser at once (they
+    share one KEYCLOAK_SESSION cookie) -- but Keycloak now explicitly says so
+    ("You are already authenticated as different user 'X'. Please sign out
+    first.") instead of silently authenticating as the wrong one. That is the
+    correct, secure behavior; it is not something a flow tweak should try to
+    route around.
+    """
+    realm = get(f"{KC_URL}/admin/realms/{REALM}", token)
+    source_flow_alias = realm.get("browserFlow", "browser")
+
+    flows = get(f"{KC_URL}/admin/realms/{REALM}/authentication/flows", token)
+    if not any(f.get("alias") == AUTOM_APP_FLOW_ALIAS for f in flows):
+        status, _ = post(
+            f"{KC_URL}/admin/realms/{REALM}/authentication/flows/{urllib.parse.quote(source_flow_alias, safe='')}/copy",
+            {"newName": AUTOM_APP_FLOW_ALIAS},
+            token=token,
+        )
+        if status not in (200, 201):
+            print(f"  Warning: copy '{source_flow_alias}' for autom-app returned {status}", flush=True)
+            return
+        print(f"  Copied '{source_flow_alias}' → '{AUTOM_APP_FLOW_ALIAS}'", flush=True)
+    else:
+        print(f"  Flow '{AUTOM_APP_FLOW_ALIAS}' already exists – verifying Cookie is disabled", flush=True)
+
+    encoded_alias = urllib.parse.quote(AUTOM_APP_FLOW_ALIAS, safe="")
+    execs_url = f"{KC_URL}/admin/realms/{REALM}/authentication/flows/{encoded_alias}/executions"
+    execs = get(execs_url, token)
+
+    cookie_exec = next(
+        (e for e in execs if e.get("level") == 0 and e.get("providerId") == "auth-cookie"),
+        None,
+    )
+    if cookie_exec and cookie_exec.get("requirement") != "DISABLED":
+        cookie_exec["requirement"] = "DISABLED"
+        status, _ = put_body(execs_url, cookie_exec, token=token)
+        if status in (200, 204):
+            print("  Disabled Cookie execution (was letting a different portal's SSO cookie authenticate here)", flush=True)
+        else:
+            print(f"  Warning: disable Cookie execution returned {status}", flush=True)
+    elif cookie_exec:
+        print("  Cookie execution already DISABLED", flush=True)
+    else:
+        print("  Warning: no top-level 'auth-cookie' execution found to disable", flush=True)
+
+    clients = get(
+        f"{KC_URL}/admin/realms/{REALM}/clients?clientId={urllib.parse.quote(AUTOM_APP_CLIENT_ID)}", token
+    )
+    app_client = next((c for c in clients if c.get("clientId") == AUTOM_APP_CLIENT_ID), None)
+    if not app_client:
+        print(f"  Warning: '{AUTOM_APP_CLIENT_ID}' client not found – flow created but not bound", flush=True)
+        return
+
+    flows = get(f"{KC_URL}/admin/realms/{REALM}/authentication/flows", token)
+    flow_id = next((f["id"] for f in flows if f.get("alias") == AUTOM_APP_FLOW_ALIAS), None)
+    if not flow_id:
+        print("  Warning: could not read back flow ID", flush=True)
+        return
+
+    overrides = app_client.get("authenticationFlowBindingOverrides") or {}
+    if overrides.get("browser") == flow_id:
+        print(f"  '{AUTOM_APP_CLIENT_ID}' already bound to '{AUTOM_APP_FLOW_ALIAS}'", flush=True)
+        return
+
+    overrides["browser"] = flow_id
+    status, _ = put_body(
+        f"{KC_URL}/admin/realms/{REALM}/clients/{app_client['id']}",
+        {**app_client, "authenticationFlowBindingOverrides": overrides},
+        token=token,
+    )
+    if status in (200, 204):
+        print(f"  Bound '{AUTOM_APP_FLOW_ALIAS}' to '{AUTOM_APP_CLIENT_ID}' client", flush=True)
+    else:
+        print(f"  Warning: bind flow to client returned {status}", flush=True)
+
+
 def remove_organization_scope_from_client(token, client_id):
     """Keycloak's native Organizations feature auto-attaches its 'organization'
     client scope as OPTIONAL to every existing client, superadmin included --
@@ -1295,6 +1405,9 @@ def main():
     print("\nSetting up Browser-SuperAdmin-only auth flow …", flush=True)
     setup_superadmin_browser_flow(token)
     remove_organization_scope_from_client(token, SUPERADMIN_CLIENT_ID)
+
+    print("\nSetting up Browser-AutomApp auth flow (Cookie-bypass fix) …", flush=True)
+    setup_autom_app_browser_flow(token)
 
     # ── Demo users ───────────────────────────────────────────────────────
     setup_demo_users(token, groups)
