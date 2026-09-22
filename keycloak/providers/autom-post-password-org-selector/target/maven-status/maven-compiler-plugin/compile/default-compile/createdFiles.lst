@@ -9,6 +9,7 @@ com\selise\autom\keycloak\AutomAlwaysTrueConditionFactory.class
 com\selise\autom\keycloak\PostOrgProjectSelectorAuthenticator.class
 com\selise\autom\keycloak\AutomProjectSwitchResource$SwitchRequest.class
 com\selise\autom\keycloak\PostOrgProjectSelectorAuthenticatorFactory.class
+com\selise\autom\keycloak\AutomMfaUtil.class
 com\selise\autom\keycloak\AutomMfaEnforcementAuthenticatorFactory.class
 com\selise\autom\keycloak\AutomMfaEnforcementAuthenticator.class
 com\selise\autom\keycloak\AutomProjectSwitchResourceProvider.class

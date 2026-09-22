@@ -22,6 +22,7 @@ import org.keycloak.models.OrganizationModel;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserSessionModel;
+import org.keycloak.models.credential.OTPCredentialModel;
 import org.keycloak.organization.OrganizationProvider;
 import org.keycloak.services.managers.AppAuthManager;
 
@@ -110,6 +111,16 @@ public class AutomProjectSwitchResource {
                 .anyMatch(candidate -> candidate.getId().equals(org.getId()) && candidate.isEnabled());
         if (!isMember) {
             return corsOk(Response.status(403).entity("{\"error\":\"organization access denied\"}"), origin).build();
+        }
+
+        // Login-time enforcement (AutomMfaEnforcementAuthenticator) only runs
+        // during the browser authentication flow, never on an in-session
+        // switch -- without this check a user who never set up MFA could
+        // switch straight into an MFA-mandatory org from an already-active
+        // session and never be asked for it.
+        if (AutomMfaUtil.isMfaMandatory(org) && !user.credentialManager().isConfiguredFor(OTPCredentialModel.TYPE)) {
+            return corsOk(Response.status(403)
+                    .entity("{\"error\":\"mfa_required\",\"organizationId\":\"" + org.getId() + "\"}"), origin).build();
         }
 
         // Find the org's top-level KC group.

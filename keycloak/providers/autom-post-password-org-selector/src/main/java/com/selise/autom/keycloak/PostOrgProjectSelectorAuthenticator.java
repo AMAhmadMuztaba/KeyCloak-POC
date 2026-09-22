@@ -27,9 +27,10 @@ import org.keycloak.organization.OrganizationProvider;
  * If the user has no project memberships the picker remains visible with an
  * explicit access message. Silently issuing an unscoped token is unsafe and
  * makes a missing Keycloak project hierarchy look like a broken UI redirect.
- * The project chooser is always shown for an interactive login, even when only
- * one project is accessible. This makes the workspace boundary explicit and
- * guarantees the user sees the required organization → project sequence.
+ * When exactly one project is accessible, it is auto-selected and the picker
+ * is skipped entirely -- mirroring how KC's native org step already skips
+ * when the user belongs to exactly one organization. The picker is only
+ * shown when there is a real choice to make (2+ accessible projects).
  *
  * Silent project switching:
  *   Pass kc_project_hint=<projectName> in the auth request. When the request
@@ -87,6 +88,13 @@ public final class PostOrgProjectSelectorAuthenticator implements Authenticator 
         // the protocol mapper will emit that stored value unchanged.
         String prompt = context.getAuthenticationSession().getClientNote("prompt");
         if ("none".equals(prompt)) {
+            context.success();
+            return;
+        }
+
+        // Exactly one accessible project: nothing to choose, so don't ask.
+        if (projects.size() == 1) {
+            selectProject(context, org, projects.get(0));
             context.success();
             return;
         }

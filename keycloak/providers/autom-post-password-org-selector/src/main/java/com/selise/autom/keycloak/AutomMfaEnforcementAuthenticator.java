@@ -1,6 +1,5 @@
 package com.selise.autom.keycloak;
 
-import java.util.List;
 import org.keycloak.authentication.AuthenticationFlowContext;
 import org.keycloak.authentication.Authenticator;
 import org.keycloak.models.KeycloakSession;
@@ -48,7 +47,7 @@ public final class AutomMfaEnforcementAuthenticator implements Authenticator {
             return;
         }
 
-        if (isMfaMandatory(org) && !user.credentialManager().isConfiguredFor(OTPCredentialModel.TYPE)) {
+        if (AutomMfaUtil.isMfaMandatory(org) && !user.credentialManager().isConfiguredFor(OTPCredentialModel.TYPE)) {
             context.getAuthenticationSession().addRequiredAction(UserModel.RequiredAction.CONFIGURE_TOTP);
         }
 
@@ -58,11 +57,6 @@ public final class AutomMfaEnforcementAuthenticator implements Authenticator {
     @Override
     public void action(AuthenticationFlowContext context) {
         context.success();
-    }
-
-    private static boolean isMfaMandatory(OrganizationModel org) {
-        List<String> values = org.getAttributes().get("mfaMandatory");
-        return values != null && !values.isEmpty() && "true".equalsIgnoreCase(values.get(0));
     }
 
     private OrganizationModel resolveOrg(AuthenticationFlowContext context) {

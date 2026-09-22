@@ -919,7 +919,7 @@ def setup_superadmin_browser_flow(token):
     login to any user who does NOT have the 'super-admin' realm role.
 
     Flow structure (copy of browser):
-      Cookie (ALTERNATIVE)
+      Cookie (DISABLED)                         ← see below, was ALTERNATIVE
       Identity Provider Redirector (ALTERNATIVE)
       forms subflow (ALTERNATIVE)
         Username Password Form (REQUIRED)
@@ -927,6 +927,20 @@ def setup_superadmin_browser_flow(token):
         Role gate (CONDITIONAL)                 ← blocks non-super-admins
           Condition - user role (REQUIRED)      ← condUserRole=super-admin, negate=true
           Deny access (REQUIRED)
+
+    Cookie is deliberately DISABLED here (unlike the main 'browser' flow it was
+    copied from, where it stays ALTERNATIVE): as an ALTERNATIVE at the same
+    level as 'forms', a valid pre-existing SSO session cookie short-circuits
+    the whole ALTERNATIVE group and 'forms' — including the Role gate inside
+    it — never runs at all. Concretely: a plain business-portal user with a
+    live SSO cookie could get a token minted for autom-superadmin without ever
+    being role-checked (confirmed live, 2026-09-20, before this fix — see
+    project memory / D:\\AutomNew\\l3-react-autom-superadmin's main.tsx history).
+    Disabling Cookie here forces every login attempt on this flow through
+    'forms' unconditionally, so the Role gate always runs. This mirrors the FE
+    fix (prompt: 'login' on both portals' keycloak.login() calls) at the KC
+    layer, and is the one that also protects a caller hitting the authorize
+    endpoint directly instead of going through the React app.
 
     Then binds the flow as a browser-flow override on the autom-superadmin client.
     """
@@ -947,6 +961,25 @@ def setup_superadmin_browser_flow(token):
     encoded_alias = urllib.parse.quote(SUPERADMIN_FLOW_ALIAS, safe="")
     execs_url = f"{KC_URL}/admin/realms/{REALM}/authentication/flows/{encoded_alias}/executions"
     execs = get(execs_url, token)
+
+    # Disable the top-level Cookie (auth-cookie) execution -- see the
+    # docstring above for why. Without this, an existing SSO session cookie
+    # bypasses 'forms' (and the Role gate inside it) entirely.
+    cookie_exec = next(
+        (e for e in execs if e.get("level") == 0 and e.get("providerId") == "auth-cookie"),
+        None,
+    )
+    if cookie_exec and cookie_exec.get("requirement") != "DISABLED":
+        cookie_exec["requirement"] = "DISABLED"
+        status, _ = put_body(execs_url, cookie_exec, token=token)
+        if status in (200, 204):
+            print("  Disabled Cookie execution (was bypassing the Role gate)", flush=True)
+        else:
+            print(f"  Warning: disable Cookie execution returned {status}", flush=True)
+    elif cookie_exec:
+        print("  Cookie execution already DISABLED", flush=True)
+    else:
+        print("  Warning: no top-level 'auth-cookie' execution found to disable", flush=True)
 
     # Locate the forms subflow.
     forms_name = next(

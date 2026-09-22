@@ -86,8 +86,20 @@ class Flow:
         resp = self.opener.open(req)
         return resp.getcode(), resp.headers.get("Location"), resp.read().decode(errors="replace")
 
+    @staticmethod
+    def _code_redirect_or_none(code, loc):
+        """Both the org picker AND the project picker can be silently
+        auto-skipped by Keycloak/the custom authenticators when there is
+        exactly one option -- in that case this same response already
+        carries the final auth code. Returns that location, or None if the
+        caller should keep walking the picker flow."""
+        if code in (302, 303) and loc and "code=" in loc:
+            return loc
+        return None
+
     def login(self, username, password, org_alias, project_id_or_name, project_lookup=None):
-        """Full interactive login: credentials -> org picker -> project picker -> token."""
+        """Full interactive login: credentials -> [org picker] -> [project picker] -> token.
+        Either picker step may be absent (single org / single project auto-select)."""
         auth_params = {
             "client_id": self.client_id,
             "redirect_uri": self.redirect_uri,
@@ -108,38 +120,44 @@ class Flow:
         code, loc, html = self._request("POST", action, {"username": username, "password": password, "credentialId": ""})
         if "Invalid username or password" in html:
             raise RuntimeError("Invalid username or password")
-        if code in (302, 303):
-            code, loc, html = self._request("GET", loc)
-        action = self._form_action(html)
-        if action is None:
-            raise RuntimeError(f"Login did not advance to next step. Snippet: {html[:800]}")
 
-        # Org picker step (skipped by KC if the user has exactly one org).
-        if 'name="organization"' in html:
-            code, loc, html = self._request("POST", action, {"organization": org_alias})
+        final_loc = self._code_redirect_or_none(code, loc)
+        if final_loc is None:
             if code in (302, 303):
                 code, loc, html = self._request("GET", loc)
             action = self._form_action(html)
             if action is None:
-                raise RuntimeError(f"Org picker did not advance. Snippet: {html[:800]}")
+                raise RuntimeError(f"Login did not advance to next step. Snippet: {html[:800]}")
 
-        # Project picker step.
-        if 'name="project"' in html:
-            project_value = project_id_or_name
-            if project_lookup and project_id_or_name in project_lookup:
-                project_value = project_lookup[project_id_or_name]
-            elif project_id_or_name not in re.findall(r'name="project" value="([^"]+)"', html):
-                # Caller passed a NAME, not an id — resolve it from the picker HTML.
-                for m in re.finditer(r'value="([^"]+)">\s*<span[^>]*>.*?<strong>([^<]+)</strong>', html, re.S):
-                    if m.group(2).strip().lower() == project_id_or_name.lower():
-                        project_value = m.group(1)
-                        break
-            code, loc, html = self._request("POST", action, {"project": project_value})
-        else:
-            raise RuntimeError(f"No project picker shown. Snippet: {html[:800]}")
+            # Org picker step (skipped by KC if the user has exactly one org).
+            if 'name="organization"' in html:
+                code, loc, html = self._request("POST", action, {"organization": org_alias})
+                final_loc = self._code_redirect_or_none(code, loc)
+                if final_loc is None:
+                    if code in (302, 303):
+                        code, loc, html = self._request("GET", loc)
+                    action = self._form_action(html)
+                    if action is None:
+                        raise RuntimeError(f"Org picker did not advance. Snippet: {html[:800]}")
+
+            # Project picker step (skipped by KC if the user has exactly one project).
+            if final_loc is None:
+                if 'name="project"' in html:
+                    project_value = project_id_or_name
+                    if project_lookup and project_id_or_name in project_lookup:
+                        project_value = project_lookup[project_id_or_name]
+                    elif project_id_or_name not in re.findall(r'name="project" value="([^"]+)"', html):
+                        # Caller passed a NAME, not an id — resolve it from the picker HTML.
+                        for m in re.finditer(r'value="([^"]+)">\s*<span[^>]*>.*?<strong>([^<]+)</strong>', html, re.S):
+                            if m.group(2).strip().lower() == project_id_or_name.lower():
+                                project_value = m.group(1)
+                                break
+                    code, loc, html = self._request("POST", action, {"project": project_value})
+                    final_loc = loc
+                else:
+                    raise RuntimeError(f"No project picker shown. Snippet: {html[:800]}")
 
         # Follow redirects to our redirect_uri with the auth code in the fragment.
-        final_loc = loc
         hops = 0
         while final_loc and "code=" not in final_loc and hops < 5:
             _, final_loc, _ = self._request("GET", final_loc)

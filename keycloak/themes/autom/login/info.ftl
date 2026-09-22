@@ -11,6 +11,19 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/open-sauce-sans/400.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/open-sauce-sans/500.css">
     <link rel="stylesheet" href="${url.resourcesPath}/css/login.css">
+    <#-- An action-token flow (onboarding, email verify, etc.) just finished --
+         continue straight to the app instead of making the user click "Back
+         to Application". The app immediately detects no session and redirects
+         to a FRESH Keycloak login (prompt: 'login' -- see main.tsx) itself.
+         Tried redirecting straight to url.loginUrl instead (skipping this hop
+         entirely), but that reuses the ORIGINAL action-token flow's auth
+         session, which Keycloak has already cleaned up by this point --
+         Keycloak errors with "Restart login cookie not found" instead of
+         showing a login form. pageRedirectUri is the only reliable target here. -->
+    <#if !skipLink?? && pageRedirectUri?has_content>
+    <meta http-equiv="refresh" content="0; url=${pageRedirectUri}">
+    <script>window.location.replace(${pageRedirectUri?js_string?no_esc});</script>
+    </#if>
 </head>
 <body>
     <div class="page">
