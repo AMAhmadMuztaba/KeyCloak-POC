@@ -30,6 +30,17 @@
 
       <form id="kc-form-login" action="${url.loginAction}" method="post">
 
+        <#-- onfocus="this.select()" on both fields below: autocomplete="username"/
+             "current-password" (needed for password manager support) means the
+             browser can silently fill a value into these fields, and that
+             inserted text isn't always left selected the way a manual autofill
+             pick normally is. Without selecting on focus, typing over an
+             autofilled value inserts at the cursor instead of replacing it --
+             confirmed live: clicking the field and typing "alice@x.com" over an
+             autofilled "alice@x.com" produced "alice@x.comalice@x.com", silently
+             submitted, and always failed as wrong credentials. Selecting the
+             existing value on focus means any subsequent typing replaces it,
+             regardless of how it got there. -->
         <div class="field">
           <label for="username" class="label">${msg("autom.login.emailLabel")}</label>
           <input
@@ -41,6 +52,7 @@
             autocomplete="username"
             placeholder="${msg("autom.login.emailPlaceholder")}"
             autofocus
+            onfocus="this.select()"
           />
         </div>
 
@@ -54,6 +66,7 @@
               class="input"
               autocomplete="current-password"
               placeholder="${msg("autom.login.passwordPlaceholder")}"
+              onfocus="this.select()"
             />
             <button type="button" class="toggle-password" onclick="togglePassword()" aria-label="Toggle password visibility">
               <svg id="eye-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
