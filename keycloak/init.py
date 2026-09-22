@@ -810,6 +810,18 @@ def configure_realm_security(token):
         "quickLoginCheckMilliSeconds":    1000,
         "maxDeltaTimeSeconds":            43200,
         "failureFactor":                  5,
+        # Must stay comfortably above minimumQuickLoginWaitSeconds (60) above.
+        # KC's default (60s) governs how long a single login-form step (the
+        # session_code/execution behind the password page) stays valid before
+        # KC silently discards it and restarts the whole flow -- no error, no
+        # log event, just a fresh /auth redirect that looks exactly like the
+        # app bounced you back to login. A user who gets locked out and does
+        # the sensible thing (waits the ~60s for the lockout to clear before
+        # retyping their password) was landing EXACTLY on that expired window
+        # every single time, on the very next attempt. Confirmed live: a
+        # correct-password submission 70s after the login page loaded bounced
+        # silently with the 60s default, and succeeded cleanly once raised.
+        "accessCodeLifespan":             300,
         "passwordPolicy":                 "length(12) and upperCase(1) and lowerCase(1) and digits(1) and notUsername() and passwordHistory(3)",
         "accessTokenLifespan":            300,
         "ssoSessionIdleTimeout":          1800,
