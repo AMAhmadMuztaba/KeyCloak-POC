@@ -1125,6 +1125,35 @@ def setup_superadmin_browser_flow(token):
         print(f"  Warning: bind flow to client returned {status}", flush=True)
 
 
+def remove_organization_scope_from_client(token, client_id):
+    """Keycloak's native Organizations feature auto-attaches its 'organization'
+    client scope as OPTIONAL to every existing client, superadmin included --
+    this client is deliberately not org-aware (see 'Browser - SuperAdmin only',
+    which has no Organization subflow), so leaving the scope available here is
+    latent misconfiguration even though it never actually triggers org-aware
+    behavior on its own (that also needs the execution in the bound flow,
+    which this client's flow doesn't have)."""
+    clients = get(f"{KC_URL}/admin/realms/{REALM}/clients?clientId={urllib.parse.quote(client_id)}", token)
+    client = next((c for c in clients if c.get("clientId") == client_id), None)
+    if not client:
+        return
+    scopes = get(f"{KC_URL}/admin/realms/{REALM}/client-scopes", token)
+    scope = next((s for s in scopes if s.get("name") == "organization"), None)
+    if not scope:
+        return
+    optional = get(f"{KC_URL}/admin/realms/{REALM}/clients/{client['id']}/optional-client-scopes", token)
+    if not any(s.get("id") == scope["id"] for s in optional):
+        return
+    status, _ = delete(
+        f"{KC_URL}/admin/realms/{REALM}/clients/{client['id']}/optional-client-scopes/{scope['id']}",
+        token=token,
+    )
+    if status in (204, 404):
+        print(f"  Removed stray 'organization' optional scope from '{client_id}'", flush=True)
+    else:
+        print(f"  Warning: removing organization scope from '{client_id}' returned {status}", flush=True)
+
+
 # ── Required-action helpers ───────────────────────────────────────────────────
 
 def enable_required_action(token, alias, label, default=False):
@@ -1265,6 +1294,7 @@ def main():
 
     print("\nSetting up Browser-SuperAdmin-only auth flow …", flush=True)
     setup_superadmin_browser_flow(token)
+    remove_organization_scope_from_client(token, SUPERADMIN_CLIENT_ID)
 
     # ── Demo users ───────────────────────────────────────────────────────
     setup_demo_users(token, groups)
