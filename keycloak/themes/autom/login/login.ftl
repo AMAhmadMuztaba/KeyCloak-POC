@@ -123,8 +123,20 @@
     // trip the "quick retry" lockout on its own. Disabling the button on the
     // form's first submit prevents any further click from firing a second
     // request; the real POST still goes through normally.
+    //
+    // The disable is deferred with setTimeout(..., 0) rather than run
+    // synchronously in this handler -- disabling a <button type="submit">
+    // while its own 'submit' event is still being processed is a known
+    // browser footgun that can cancel the in-flight submission itself
+    // instead of just blocking a second one, so the real click silently did
+    // nothing and needed 2-3 tries with zero error, zero server log entry to
+    // show for it. Deferring by one tick lets the browser finish acting on
+    // this submission first; the button is still disabled before any human
+    // could physically click it again.
     document.getElementById('kc-form-login').addEventListener('submit', function () {
-      document.querySelector('#kc-form-login button[type="submit"]').disabled = true;
+      setTimeout(function () {
+        document.querySelector('#kc-form-login button[type="submit"]').disabled = true;
+      }, 0);
     });
   </script>
 </body>
