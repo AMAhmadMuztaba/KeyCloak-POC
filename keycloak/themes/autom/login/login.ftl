@@ -101,6 +101,18 @@
         eyeOffIcon.style.display = 'none';
       }
     }
+
+    // Without this, a double-click, an Enter keypress that lands while a
+    // browser autofill suggestion is also submitting, or any other double
+    // trigger sends two (or more) near-simultaneous POSTs for what was one
+    // user action. Each extra POST counts as its own failed/quick attempt
+    // toward brute-force detection, so a single genuine login attempt could
+    // trip the "quick retry" lockout on its own. Disabling the button on the
+    // form's first submit prevents any further click from firing a second
+    // request; the real POST still goes through normally.
+    document.getElementById('kc-form-login').addEventListener('submit', function () {
+      document.querySelector('#kc-form-login button[type="submit"]').disabled = true;
+    });
   </script>
 </body>
 </html>
