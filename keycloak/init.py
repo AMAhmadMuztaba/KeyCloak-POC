@@ -828,6 +828,34 @@ def configure_realm_security(token):
         "ssoSessionMaxLifespan":          28800,
         "refreshTokenMaxReuse":           0,
         "resetPasswordAllowed":           False,
+        # Confirmed LIVE on 2026-09-23 that resetPasswordAllowed is actually
+        # True on the real realm right now (set directly via the admin API in
+        # an earlier session, per project-keycloak-autom-realm memory -- "the
+        # 'Forgot password?' link was already coded ... but silently never
+        # rendered ... Set to true via admin API"). This script's own payload
+        # was never updated to match, so re-running init.py against the live
+        # realm would silently turn forgot-password back off. Left alone here
+        # (out of scope for this pass, which only touched theme files) but
+        # flagging it: fix this drift before init.py is next run for real, or
+        # it will regress a fix that's already live.
+        #
+        # rememberMe: confirmed LIVE (2026-09-23, read-only admin API check)
+        # that this realm currently has rememberMe = False, so the real
+        # "Remember me" checkbox added to login.ftl this session (bound to
+        # Keycloak's own stock realm.rememberMe / login.rememberMe FTL
+        # binding -- not a custom control) is correctly present in the
+        # template but not yet visible on the live page. Set to True HERE
+        # (in this local script only -- NOT applied to the live realm this
+        # session) because it's a low-risk, opt-in, well-documented native KC
+        # feature: unchecked by default, changes nothing for anyone who
+        # doesn't tick it, and is exactly the kind of realm-wide flag that's
+        # safe to flip (unlike touching browserFlow/execution requirements,
+        # which this project is deliberately careful about elsewhere in this
+        # file). Applying it live means either re-running this script against
+        # the realm or a one-line `PUT .../admin/realms/{realm}
+        # {"rememberMe": true}` -- deliberately NOT done automatically here;
+        # left for the user to trigger when ready.
+        "rememberMe":                     True,
         # Allow the app to load KC in a hidden iframe for silent SSO check
         # (keycloak-js onLoad:'check-sso' + silentCheckSsoRedirectUri).
         # xFrameOptions is cleared because it conflicts with frame-ancestors in Chrome.

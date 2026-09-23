@@ -13,11 +13,9 @@
 </head>
 <body>
     <div class="page">
+        <img src="${url.resourcesPath}/img/logo-lockup.svg" alt="Autom" class="page-logo">
+        <div class="card-col">
         <div class="card">
-
-            <div class="header">
-                <img src="${url.resourcesPath}/img/logo-lockup.svg" alt="Autom" class="logo">
-            </div>
 
             <div class="step-progress" role="group" aria-label="${msg("autom.password.eyebrow")}">
                 <span class="is-done"></span>
@@ -28,7 +26,6 @@
             <div class="header">
                 <p class="eyebrow">${msg("autom.password.eyebrow")}</p>
                 <h1 class="title">${msg("autom.password.title")}</h1>
-                <p class="subtitle">${msg("autom.password.subtitle")}</p>
             </div>
 
             <#if messagesPerField.existsError('password-new','password-confirm')>
@@ -129,6 +126,7 @@
 
             </form>
 
+        </div>
             <#include "language-switcher.ftl">
         </div>
     </div>

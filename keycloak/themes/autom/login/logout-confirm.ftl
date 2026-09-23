@@ -14,10 +14,11 @@
 </head>
 <body>
     <div class="page">
+        <img src="${url.resourcesPath}/img/logo-lockup.svg" alt="Autom" class="page-logo">
+        <div class="card-col">
         <div class="card">
 
             <div class="header">
-                <img src="${url.resourcesPath}/img/logo-lockup.svg" alt="Autom" class="logo">
                 <h1 class="title">${msg("logoutConfirmTitle")}</h1>
             </div>
 
@@ -38,6 +39,7 @@
                 </div>
             </#if>
 
+        </div>
             <#include "language-switcher.ftl">
         </div>
     </div>

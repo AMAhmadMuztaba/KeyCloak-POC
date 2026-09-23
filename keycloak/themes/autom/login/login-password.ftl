@@ -13,10 +13,11 @@
 </head>
 <body>
     <div class="page">
+        <img src="${url.resourcesPath}/img/logo-lockup.svg" alt="Autom" class="page-logo">
+        <div class="card-col">
         <div class="card">
 
             <div class="header">
-                <img src="${url.resourcesPath}/img/logo-lockup.svg" alt="Autom" class="logo">
                 <h1 class="title">Sign in</h1>
                 <p class="subtitle">Autom Super Admin is an internal surface. Sign in with your Autom staff account.</p>
             </div>
@@ -50,6 +51,7 @@
                 <button type="submit" class="btn-primary">Sign in</button>
 
             </form>
+        </div>
         </div>
     </div>
 </body>

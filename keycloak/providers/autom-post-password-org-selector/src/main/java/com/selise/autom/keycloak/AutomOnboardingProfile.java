@@ -23,36 +23,25 @@ import org.keycloak.models.KeycloakSession;
  * Extends stock UPDATE_PROFILE (never replaces it — registered under a new
  * provider id, same pattern as {@code autom-optional-totp}, so the built-in
  * "UPDATE_PROFILE" stays available for anything else that queues it) to add
- * two things the plain FreeMarker template can't get on its own:
+ * an optional profile-picture upload, forwarded server-to-server to the .NET
+ * API's internal endpoint (shared-secret auth — the user has no bearer token
+ * yet mid-onboarding). TEMPORARY: MongoDB via that endpoint is a stand-in
+ * until real object storage exists; swapping it needs no change on this side.
  *
- * <ol>
- *   <li>The "Joining {org} · {role}" context line — resolved server-side via
- *       {@link AutomJoiningContext} from the user's own Keycloak membership,
- *       then injected as form attributes before delegating to the stock
- *       challenge renderer (which still renders login-update-profile.ftl,
- *       via getResponseAction() — unchanged, see AutomOptionalTotp for the
- *       same trick applied to CONFIGURE_TOTP).</li>
- *   <li>An optional profile-picture upload, forwarded server-to-server to the
- *       .NET API's internal endpoint (shared-secret auth — the user has no
- *       bearer token yet mid-onboarding). TEMPORARY: MongoDB via that
- *       endpoint is a stand-in until real object storage exists; swapping it
- *       needs no change on this side.
- *
- *       Deliberately NOT a real multipart file field: a first attempt used
- *       enctype="multipart/form-data" with a file input, which broke stock
- *       UpdateProfile.processAction() outright — it (like everything else on
- *       this form) reads fields via context.getHttpRequest().getDecodedFormParameters(),
- *       and on this Keycloak/Quarkus version that call throws once any file
- *       part is present in the request (confirmed live via a container stack
- *       trace, RestEasy Reactive's FormData$FormValueImpl.getValue() choking
- *       on a non-string part) — so firstName/lastName/email all came back
- *       empty ("Please specify this field" x3) even though the request body
- *       had ostensibly-fine values. Fix: the form stays plain url-encoded
- *       (its original, working shape) and the picture travels as a base64
- *       data URL in an ordinary hidden field instead, read via the exact
- *       same getDecodedFormParameters() call already proven to work for
- *       every other field on this page.</li>
- * </ol>
+ * Deliberately NOT a real multipart file field: a first attempt used
+ * enctype="multipart/form-data" with a file input, which broke stock
+ * UpdateProfile.processAction() outright — it (like everything else on this
+ * form) reads fields via context.getHttpRequest().getDecodedFormParameters(),
+ * and on this Keycloak/Quarkus version that call throws once any file part is
+ * present in the request (confirmed live via a container stack trace,
+ * RestEasy Reactive's FormData$FormValueImpl.getValue() choking on a
+ * non-string part) — so firstName/lastName/email all came back empty
+ * ("Please specify this field" x3) even though the request body had
+ * ostensibly-fine values. Fix: the form stays plain url-encoded (its
+ * original, working shape) and the picture travels as a base64 data URL in
+ * an ordinary hidden field instead, read via the exact same
+ * getDecodedFormParameters() call already proven to work for every other
+ * field on this page.
  *
  * The picture is optional and best-effort: an invalid/oversized upload or a
  * failed call to the API is logged and swallowed, never blocks the profile
@@ -73,19 +62,6 @@ public class AutomOnboardingProfile extends UpdateProfile {
             .build();
 
     private static final Properties INTERNAL_CONFIG = loadInternalConfig();
-
-    @Override
-    public void requiredActionChallenge(RequiredActionContext context) {
-        AutomJoiningContext joining = AutomJoiningContext.resolve(
-                context.getSession(), context.getRealm(), context.getUser());
-        if (joining != null && joining.orgName != null) {
-            context.form().setAttribute("automJoiningOrgName", joining.orgName);
-            if (joining.roleLabel != null) {
-                context.form().setAttribute("automJoiningRole", joining.roleLabel);
-            }
-        }
-        super.requiredActionChallenge(context);
-    }
 
     @Override
     public void processAction(RequiredActionContext context) {

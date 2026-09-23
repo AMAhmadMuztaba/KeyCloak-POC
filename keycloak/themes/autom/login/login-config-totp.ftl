@@ -1,5 +1,4 @@
 <#import "template.ftl" as layout>
-<#import "password-commons.ftl" as passwordCommons>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -15,11 +14,9 @@
 </head>
 <body>
     <div class="page">
+        <img src="${url.resourcesPath}/img/logo-lockup.svg" alt="Autom" class="page-logo">
+        <div class="card-col">
         <div class="card card--wide">
-
-            <div class="header">
-                <img src="${url.resourcesPath}/img/logo-lockup.svg" alt="Autom" class="logo">
-            </div>
 
             <div class="step-progress" role="group" aria-label="${msg("autom.totp.eyebrow")}">
                 <span class="is-done"></span>
@@ -29,10 +26,10 @@
 
             <div class="header">
                 <p class="eyebrow">${msg("autom.totp.eyebrow")}</p>
-                <h1 class="title">${msg("autom.totp.title")}</h1>
                 <#if automSkippable??>
-                    <p class="subtitle">${msg("autom.totp.subtitleRecommended")}</p>
+                    <h1 class="title">${msg("autom.totp.title")}</h1>
                 <#else>
+                    <h1 class="title">${msg("autom.totp.titleRequired")}</h1>
                     <p class="subtitle">${msg("autom.totp.subtitleRequired")}</p>
                 </#if>
             </div>
@@ -43,17 +40,24 @@
             </div>
             </#if>
 
+            <#-- Onboarding.dc.html (MFA step, "Can't scan it? Enter this setup
+                 key") shows the QR code and the manual setup key together,
+                 always -- the key is "the accessible equivalent of the QR
+                 (WCAG 1.1.1), not a fallback" (Onboarding Stories.md, Story
+                 O3). Previously this toggled between QR-only and key-only via
+                 a mode= link/page reload; both totp.totpSecretQrCode and
+                 totp.totpSecretEncoded are populated on this context
+                 regardless of mode, so showing both needs no new bindings or
+                 message keys -- just drop the toggle. -->
             <ol class="totp-steps">
                 <li>
-                    <#if mode?? && mode = "manual">
-                        <p class="totp-step-label">${msg("autom.totp.cantScan")}</p>
-                        <p class="totp-secret-key" id="kc-totp-secret-key">${totp.totpSecretEncoded}</p>
-                        <a href="${totp.qrUrl}" id="mode-barcode" class="forgot-link">${msg("autom.totp.showQr")}</a>
-                    <#else>
-                        <img id="kc-totp-secret-qr-code" class="totp-qr" src="data:image/png;base64, ${totp.totpSecretQrCode}" alt="QR code for authenticator setup">
-                        <p class="totp-step-label" style="margin-top: 0.75rem; margin-bottom: 0;">${msg("autom.totp.scanInstruction")}</p>
-                        <a href="${totp.manualUrl}" id="mode-manual" class="forgot-link">${msg("autom.totp.cantScan")}</a>
-                    </#if>
+                    <img id="kc-totp-secret-qr-code" class="totp-qr" src="data:image/png;base64, ${totp.totpSecretQrCode}" alt="QR code for authenticator setup">
+                    <p class="totp-step-label" style="margin-top: 0.75rem; margin-bottom: 0;">${msg("autom.totp.scanInstruction")}</p>
+                    <p class="totp-step-label" style="margin-top: 0.75rem;">${msg("autom.totp.cantScan")}</p>
+                    <div class="totp-secret-row">
+                        <span class="totp-secret-key" id="kc-totp-secret-key">${totp.totpSecretEncoded}</span>
+                        <button type="button" id="copy-secret-btn" class="btn-copy-secret" onclick="copyTotpSecret()">${msg("autom.totp.copy")}</button>
+                    </div>
                 </li>
             </ol>
 
@@ -88,8 +92,6 @@
                 <input type="hidden" id="totpSecret" name="totpSecret" value="${totp.totpSecret}" />
                 <#if mode??><input type="hidden" id="mode" name="mode" value="${mode}"/></#if>
 
-                <@passwordCommons.logoutOtherSessions/>
-
                 <#-- automSkippable is set only by the custom autom-optional-totp provider
                      (AutomOptionalTotp.java), which intercepts cancel-aia itself before
                      delegating to stock UpdateTotp validation. This same page also renders
@@ -103,8 +105,24 @@
 
             </form>
 
+        </div>
             <#include "language-switcher.ftl">
         </div>
     </div>
+
+    <script>
+        var totpCopyLabel = "${msg("autom.totp.copy")?js_string}";
+        var totpCopiedLabel = "${msg("autom.totp.copied")?js_string}";
+        function copyTotpSecret() {
+            var secret = document.getElementById('kc-totp-secret-key').textContent;
+            var btn = document.getElementById('copy-secret-btn');
+            var reset = function () { btn.textContent = totpCopyLabel; };
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(secret).catch(function () {});
+            }
+            btn.textContent = totpCopiedLabel;
+            setTimeout(reset, 1600);
+        }
+    </script>
 </body>
 </html>

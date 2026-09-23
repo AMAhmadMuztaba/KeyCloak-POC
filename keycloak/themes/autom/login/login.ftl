@@ -14,10 +14,11 @@
 </head>
 <body>
   <div class="page">
+    <img src="${url.resourcesPath}/img/logo-lockup.svg" alt="Autom" class="page-logo">
+    <div class="card-col">
     <div class="card">
 
       <div class="header">
-        <img src="${url.resourcesPath}/img/logo-lockup.svg" alt="Autom" class="logo">
         <h1 class="title">${msg("autom.login.title")}</h1>
         <p class="subtitle">${msg("autom.login.subtitle")}</p>
       </div>
@@ -68,23 +69,35 @@
               placeholder="${msg("autom.login.passwordPlaceholder")}"
               onfocus="this.select()"
             />
-            <button type="button" class="toggle-password" onclick="togglePassword()" aria-label="Toggle password visibility">
-              <svg id="eye-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                <circle cx="12" cy="12" r="3"/>
-              </svg>
-              <svg id="eye-off-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
-                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
-                <line x1="1" y1="1" x2="23" y2="23"/>
-              </svg>
-            </button>
+            <#-- Inline text toggle (Show/Hide), per the design's password field --
+                 replaces the previous eye-icon-swap button with the exact pattern
+                 Sign In.dc.html uses: a plain absolutely-positioned text button
+                 inside the field that flips the input's type. -->
+            <button type="button" id="toggle-password-btn" class="toggle-password" onclick="togglePassword()" aria-pressed="false">${msg("autom.password.toggleShow")}</button>
           </div>
         </div>
 
-        <#if realm.resetPasswordAllowed>
-          <div style="text-align: right; margin-top: -0.5rem; margin-bottom: 1rem;">
-            <a href="${url.loginResetCredentialsUrl}" class="forgot-link">${msg("autom.login.forgotPassword")}</a>
-          </div>
+        <#-- Keycloak's own stock login.ftl pairs "Remember me" and "Forgot password?"
+             on the same row (realm.rememberMe gates the checkbox; usernameHidden is
+             never set on this page since username+password share one page here, so
+             that half of the condition is always true when rememberMe itself is on).
+             realm.rememberMe is currently OFF for this realm (confirmed live via the
+             admin API this session) -- see init.py / this task's report for why it
+             was left off rather than flipped on directly. When only one of the two
+             is present the row collapses to a single flex-end item, matching the
+             page's previous single-link layout. -->
+        <#if realm.resetPasswordAllowed || (realm.rememberMe && !usernameHidden??)>
+        <div class="login-options-row<#if !(realm.rememberMe && !usernameHidden??)> login-options-row--end</#if>">
+          <#if realm.rememberMe && !usernameHidden??>
+          <label class="remember-me-label">
+            <input type="checkbox" id="rememberMe" name="rememberMe" class="remember-me-checkbox" <#if login.rememberMe??>checked</#if> />
+            <span>${msg("rememberMe")}</span>
+          </label>
+          </#if>
+          <#if realm.resetPasswordAllowed>
+          <a href="${url.loginResetCredentialsUrl}" class="forgot-link">${msg("autom.login.forgotPassword")}</a>
+          </#if>
+        </div>
         </#if>
 
         <input type="hidden" id="id-hidden-input" name="credentialId" <#if auth.selectedCredential?has_content>value="${auth.selectedCredential}"</#if>/>
@@ -95,24 +108,21 @@
 
       </form>
 
+    </div>
       <#include "language-switcher.ftl">
     </div>
   </div>
 
   <script>
+    var pwToggleShowLabel = "${msg("autom.password.toggleShow")?js_string}";
+    var pwToggleHideLabel = "${msg("autom.password.toggleHide")?js_string}";
     function togglePassword() {
       var input = document.getElementById('password');
-      var eyeIcon = document.getElementById('eye-icon');
-      var eyeOffIcon = document.getElementById('eye-off-icon');
-      if (input.type === 'password') {
-        input.type = 'text';
-        eyeIcon.style.display = 'none';
-        eyeOffIcon.style.display = 'block';
-      } else {
-        input.type = 'password';
-        eyeIcon.style.display = 'block';
-        eyeOffIcon.style.display = 'none';
-      }
+      var btn = document.getElementById('toggle-password-btn');
+      var willShow = input.type === 'password';
+      input.type = willShow ? 'text' : 'password';
+      btn.textContent = willShow ? pwToggleHideLabel : pwToggleShowLabel;
+      btn.setAttribute('aria-pressed', willShow ? 'true' : 'false');
     }
 
     // Without this, a double-click, an Enter keypress that lands while a

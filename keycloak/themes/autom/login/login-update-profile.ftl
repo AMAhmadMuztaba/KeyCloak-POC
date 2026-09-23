@@ -10,15 +10,14 @@
     <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/open-sauce-sans/400.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/open-sauce-sans/500.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css">
     <link rel="stylesheet" href="${url.resourcesPath}/css/login.css">
 </head>
 <body>
     <div class="page">
+        <img src="${url.resourcesPath}/img/logo-lockup.svg" alt="Autom" class="page-logo">
+        <div class="card-col">
         <div class="card">
-
-            <div class="header">
-                <img src="${url.resourcesPath}/img/logo-lockup.svg" alt="Autom" class="logo">
-            </div>
 
             <div class="step-progress" role="group" aria-label="${msg("autom.profile.eyebrow")}">
                 <span class="is-current"></span>
@@ -32,7 +31,13 @@
                 <p class="subtitle">${msg("autom.profile.subtitle")}</p>
             </div>
 
-            <#if message?has_content>
+            <#-- Keycloak sets an INFO/WARNING-level message on this required action's
+                 very first render ("You need to update your user profile to activate
+                 your account.") purely to explain why the page appeared -- redundant
+                 here since the header/subtitle already do that. Only a real
+                 validation failure (type "error", e.g. a required field left empty
+                 after Continue) should surface as an alert. -->
+            <#if message?has_content && message.type == 'error'>
             <div class="alert alert-${message.type}">
                 ${kcSanitize(message.summary)?no_esc}
             </div>
@@ -50,59 +55,83 @@
                         <p class="avatar-caption">${msg("autom.profile.pictureCaption")}</p>
                         <p class="avatar-error" id="avatar-error" style="display:none;"></p>
                     </div>
-                    <#-- Not submitted itself (no name) -- its contents are read client-side and
-                         stashed into the hidden profilePictureDataUrl field below instead. A
-                         multipart form (needed for a real file field) breaks Keycloak's stock
-                         UpdateProfile.processAction() on this server version -- it also calls
-                         getDecodedFormParameters(), which throws once any file part is present
-                         (confirmed live via a container stack trace) -- so the picture travels
-                         as a base64 data URL in an ordinary url-encoded field instead, the same
-                         mechanism already proven to work for every other field on this form. -->
+                    <#-- Not submitted itself (no name) -- its contents are read client-side,
+                         cropped, and stashed into the hidden profilePictureDataUrl field below
+                         instead. A multipart form (needed for a real file field) breaks
+                         Keycloak's stock UpdateProfile.processAction() on this server version --
+                         it also calls getDecodedFormParameters(), which throws once any file
+                         part is present (confirmed live via a container stack trace) -- so the
+                         picture travels as a base64 data URL in an ordinary url-encoded field
+                         instead, the same mechanism already proven to work for every other field
+                         on this form. -->
                     <input type="file" id="avatar-file-input" accept="image/png,image/jpeg,image/webp" style="display:none;">
                     <input type="hidden" id="profilePictureDataUrl" name="profilePictureDataUrl" value="">
                 </div>
 
+                <div class="crop-overlay" id="crop-overlay" style="display:none;">
+                    <div class="crop-modal">
+                        <p class="crop-modal-title">${msg("autom.profile.cropTitle")}</p>
+                        <div class="crop-canvas-wrap">
+                            <img id="crop-image" alt="">
+                        </div>
+                        <div class="crop-zoom-row">
+                            <input type="range" id="crop-zoom" min="0" max="1" step="0.01" value="0">
+                        </div>
+                        <div class="crop-modal-actions">
+                            <button type="button" class="btn-secondary" id="crop-cancel-btn">${msg("autom.profile.cropCancel")}</button>
+                            <button type="button" class="btn-primary" id="crop-save-btn">${msg("autom.profile.cropSave")}</button>
+                        </div>
+                    </div>
+                </div>
+
+                <#-- First/last name sit side by side (Onboarding.dc.html's
+                     grid-template-columns: repeat(2, ...)) -- two separate
+                     name-filtered passes over profile.attributes, both inside
+                     one grid wrapper, since Keycloak's own list can't be
+                     re-ordered or peeked ahead to pair them in a single pass. -->
+                <div class="field-grid-2">
+                    <#list profile.attributes as attribute>
+                        <#if attribute.name == 'firstName'>
+                            <div class="field">
+                                <label for="firstName" class="label">${msg("autom.profile.firstNameLabel")}</label>
+                                <input
+                                    type="text" id="firstName" name="firstName"
+                                    value="${(attribute.value!'')}"
+                                    class="input<#if messagesPerField.existsError('firstName')> input--error</#if>"
+                                    autocomplete="given-name"
+                                    autofocus
+                                />
+                                <#if messagesPerField.existsError('firstName')>
+                                    <span class="field-error">${kcSanitize(messagesPerField.get('firstName'))?no_esc}</span>
+                                </#if>
+                            </div>
+                        </#if>
+                    </#list>
+                    <#list profile.attributes as attribute>
+                        <#if attribute.name == 'lastName'>
+                            <div class="field">
+                                <label for="lastName" class="label">${msg("autom.profile.lastNameLabel")}</label>
+                                <input
+                                    type="text" id="lastName" name="lastName"
+                                    value="${(attribute.value!'')}"
+                                    class="input<#if messagesPerField.existsError('lastName')> input--error</#if>"
+                                    autocomplete="family-name"
+                                />
+                                <#if messagesPerField.existsError('lastName')>
+                                    <span class="field-error">${kcSanitize(messagesPerField.get('lastName'))?no_esc}</span>
+                                </#if>
+                            </div>
+                        </#if>
+                    </#list>
+                </div>
+
                 <#list profile.attributes as attribute>
-                    <#if attribute.name == 'firstName'>
-                        <div class="field">
-                            <label for="firstName" class="label">${msg("autom.profile.firstNameLabel")}</label>
-                            <input
-                                type="text" id="firstName" name="firstName"
-                                value="${(attribute.value!'')}"
-                                class="input<#if messagesPerField.existsError('firstName')> input--error</#if>"
-                                autocomplete="given-name"
-                                autofocus
-                            />
-                            <#if messagesPerField.existsError('firstName')>
-                                <span class="field-error">${kcSanitize(messagesPerField.get('firstName'))?no_esc}</span>
-                            </#if>
-                        </div>
-                    <#elseif attribute.name == 'lastName'>
-                        <div class="field">
-                            <label for="lastName" class="label">${msg("autom.profile.lastNameLabel")}</label>
-                            <input
-                                type="text" id="lastName" name="lastName"
-                                value="${(attribute.value!'')}"
-                                class="input<#if messagesPerField.existsError('lastName')> input--error</#if>"
-                                autocomplete="family-name"
-                            />
-                            <#if messagesPerField.existsError('lastName')>
-                                <span class="field-error">${kcSanitize(messagesPerField.get('lastName'))?no_esc}</span>
-                            </#if>
-                        </div>
+                    <#if attribute.name == 'firstName' || attribute.name == 'lastName'>
+                        <#-- already rendered above -->
                     <#elseif attribute.name == 'email'>
-                        <div class="info-box">
-                            <div class="info-box-row">
-                                <span class="info-box-label">${msg("autom.profile.emailLabel")}</span>
-                                <span class="info-box-value">${(attribute.value!'')}</span>
-                                <span class="info-box-caption">${msg("autom.profile.emailCaption")}</span>
-                            </div>
-                            <#if automJoiningOrgName??>
-                            <div class="info-box-row">
-                                <span class="info-box-label">${msg("autom.profile.joiningLabel")}</span>
-                                <span class="info-box-value">${automJoiningOrgName}<#if automJoiningRole??> · ${automJoiningRole}</#if></span>
-                            </div>
-                            </#if>
+                        <div class="field">
+                            <label class="label">${msg("autom.profile.emailLabel")}</label>
+                            <div class="input input--static">${(attribute.value!'')}</div>
                         </div>
                         <input type="hidden" name="email" value="${(attribute.value!'')}" />
                     <#elseif attribute.name == 'username'>
@@ -114,10 +143,12 @@
 
             </form>
 
+        </div>
             <#include "language-switcher.ftl">
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
     <script>
         (function () {
             var MAX_BYTES = 2 * 1024 * 1024;
@@ -133,6 +164,13 @@
             var fileInput = document.getElementById('avatar-file-input');
             var dataUrlField = document.getElementById('profilePictureDataUrl');
             var errorEl = document.getElementById('avatar-error');
+
+            var cropOverlay = document.getElementById('crop-overlay');
+            var cropImage = document.getElementById('crop-image');
+            var cropZoom = document.getElementById('crop-zoom');
+            var cropCancelBtn = document.getElementById('crop-cancel-btn');
+            var cropSaveBtn = document.getElementById('crop-save-btn');
+            var cropper = null;
 
             function updateInitials() {
                 var first = (firstNameField && firstNameField.value || '').trim();
@@ -154,6 +192,16 @@
                 fileInput.click();
             });
 
+            function closeCropModal() {
+                cropOverlay.style.display = 'none';
+                if (cropper) {
+                    cropper.destroy();
+                    cropper = null;
+                }
+                cropImage.src = '';
+                fileInput.value = '';
+            }
+
             fileInput.addEventListener('change', function () {
                 var file = fileInput.files && fileInput.files[0];
                 if (!file) return;
@@ -173,12 +221,43 @@
 
                 var reader = new FileReader();
                 reader.onload = function (e) {
-                    dataUrlField.value = e.target.result;
-                    previewEl.src = e.target.result;
-                    previewEl.style.display = 'block';
-                    initialsEl.style.display = 'none';
+                    cropImage.src = e.target.result;
+                    cropOverlay.style.display = 'flex';
+                    cropZoom.value = 0;
+                    cropper = new Cropper(cropImage, {
+                        aspectRatio: 1,
+                        viewMode: 1,
+                        dragMode: 'move',
+                        autoCropArea: 1,
+                        background: false,
+                        zoomOnWheel: false
+                    });
                 };
                 reader.readAsDataURL(file);
+            });
+
+            cropZoom.addEventListener('input', function () {
+                if (!cropper) return;
+                cropper.zoomTo(1 + parseFloat(cropZoom.value || '0'));
+            });
+
+            cropCancelBtn.addEventListener('click', closeCropModal);
+
+            cropSaveBtn.addEventListener('click', function () {
+                if (!cropper) return;
+                var canvas = cropper.getCroppedCanvas({
+                    width: 400,
+                    height: 400,
+                    imageSmoothingQuality: 'high'
+                });
+                if (!canvas) { closeCropModal(); return; }
+
+                var dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+                dataUrlField.value = dataUrl;
+                previewEl.src = dataUrl;
+                previewEl.style.display = 'block';
+                initialsEl.style.display = 'none';
+                closeCropModal();
             });
         })();
     </script>

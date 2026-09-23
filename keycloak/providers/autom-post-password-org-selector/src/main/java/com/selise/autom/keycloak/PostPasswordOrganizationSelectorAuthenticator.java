@@ -3,10 +3,13 @@ package com.selise.autom.keycloak;
 import jakarta.ws.rs.core.Response;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import org.keycloak.authentication.AuthenticationFlowContext;
 import org.keycloak.authentication.AuthenticationFlowError;
 import org.keycloak.authentication.Authenticator;
 import org.keycloak.forms.login.LoginFormsProvider;
+import org.keycloak.models.GroupModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.OrganizationModel;
 import org.keycloak.models.RealmModel;
@@ -72,29 +75,36 @@ public final class PostPasswordOrganizationSelectorAuthenticator implements Auth
             return;
         }
 
-        // Try to select the org from the auth request's scope (organization:<alias>).
-        // This covers both silent project switches and any re-auth that carries the
-        // current org in scope so this step can complete without UI.
-        String scope = context.getAuthenticationSession().getClientNote("scope");
-        String alias = extractOrgAliasFromScope(scope);
-        if (alias != null) {
-            String finalAlias = alias;
-            OrganizationModel hinted = organizations.stream()
-                    .filter(o -> o.getAlias().equalsIgnoreCase(finalAlias)
-                              || o.getName().equalsIgnoreCase(finalAlias))
-                    .findFirst()
-                    .orElse(null);
-            if (hinted != null) {
-                select(context, hinted);
-                context.success();
-                return;
-            }
-        }
-
-        // prompt=none: no UI interaction allowed. Keep existing org from user session;
-        // the token's organization claim is set by KC's native org scope handling anyway.
+        // The organization:<alias> scope hint is ONLY trusted for silent re-auth
+        // (prompt=none — KC's own silent-check-sso/iframe token refresh, which
+        // can't show any UI and needs an answer immediately). It must NOT apply
+        // to a genuinely interactive login: the frontend's requestedOidcScope()
+        // carries the LAST org alias on every auth request, including a fresh
+        // manual sign-in after signing out, so trusting the hint unconditionally
+        // here silently skipped the picker and re-logged a multi-org user back
+        // into whatever org they happened to be in last time — confirmed live,
+        // this was a real bug, not a feature. An explicit interactive login
+        // always gets asked when there's a real choice, no matter what hint the
+        // request carries.
         String prompt = context.getAuthenticationSession().getClientNote("prompt");
         if ("none".equals(prompt)) {
+            String scope = context.getAuthenticationSession().getClientNote("scope");
+            String alias = extractOrgAliasFromScope(scope);
+            if (alias != null) {
+                OrganizationModel hinted = organizations.stream()
+                        .filter(o -> o.getAlias().equalsIgnoreCase(alias)
+                                  || o.getName().equalsIgnoreCase(alias))
+                        .findFirst()
+                        .orElse(null);
+                if (hinted != null) {
+                    select(context, hinted);
+                    context.success();
+                    return;
+                }
+            }
+            // No matching hint and prompt=none: no UI interaction allowed. Keep
+            // existing org from user session; the token's organization claim is
+            // set by KC's native org scope handling anyway.
             context.success();
             return;
         }
@@ -150,11 +160,51 @@ public final class PostPasswordOrganizationSelectorAuthenticator implements Auth
     }
 
     private void showPicker(AuthenticationFlowContext context, List<OrganizationModel> organizations, String errorKey) {
-        LoginFormsProvider form = context.form().setAttribute("organizations", organizations);
+        // The design shows a project count under each org name (e.g. "3 projects"),
+        // not the org's alias. Organizations and projects are unrelated models in
+        // KC (projects are plain groups), so the count has to be looked up
+        // separately per org and handed to the template as a parallel map keyed
+        // by organization id.
+        Map<String, Integer> projectCounts = organizations.stream()
+                .collect(Collectors.toMap(OrganizationModel::getId, o -> projectCountFor(context, o)));
+
+        LoginFormsProvider form = context.form()
+                .setAttribute("organizations", organizations)
+                .setAttribute("organizationProjectCounts", projectCounts);
         if (errorKey != null) {
             form.setError(errorKey);
         }
         context.challenge(form.createForm("post-password-organization-picker.ftl"));
+    }
+
+    /**
+     * Counts an organization's projects (its top-level KC group's direct
+     * subgroups, excluding the "admins"/"owners" role subgroups) — same
+     * convention used by PostOrgProjectSelectorAuthenticator.accessibleProjects()
+     * and the .NET backend's project-listing endpoints. Fails soft (returns 0)
+     * rather than risk breaking the whole login page if a group can't be
+     * resolved for some org.
+     */
+    private int projectCountFor(AuthenticationFlowContext context, OrganizationModel org) {
+        GroupModel orgGroup = context.getRealm().getTopLevelGroupsStream()
+                .filter(g -> matchesOrg(g, org))
+                .findFirst()
+                .orElse(null);
+        if (orgGroup == null) return 0;
+
+        return (int) orgGroup.getSubGroupsStream(0, 500)
+                .filter(g -> !g.getName().equalsIgnoreCase("admins") && !g.getName().equalsIgnoreCase("owners"))
+                .count();
+    }
+
+    private boolean matchesOrg(GroupModel group, OrganizationModel org) {
+        String groupName = normalize(group.getName());
+        return groupName.equals(normalize(org.getName())) || groupName.equals(normalize(org.getAlias()));
+    }
+
+    /** Keeps legacy group names such as Test_3 compatible with alias test-3. */
+    private static String normalize(String value) {
+        return value == null ? "" : value.replaceAll("[^A-Za-z0-9]", "").toLowerCase(java.util.Locale.ROOT);
     }
 
     /**

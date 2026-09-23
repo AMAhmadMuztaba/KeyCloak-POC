@@ -14,6 +14,7 @@ import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.OrganizationModel;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
+import org.keycloak.models.credential.OTPCredentialModel;
 import org.keycloak.organization.OrganizationProvider;
 
 /**
@@ -58,6 +59,25 @@ public final class PostOrgProjectSelectorAuthenticator implements Authenticator 
         OrganizationModel org = resolveOrg(context);
         if (org == null) {
             // Super-admin or org-less path — no project selection needed.
+            context.success();
+            return;
+        }
+
+        // If this org requires MFA and the user hasn't set it up yet, defer
+        // project selection to run AFTER MFA setup instead of showing it here
+        // in-flow -- required actions (how MFA setup is enforced) only ever
+        // run once the ENTIRE authentication flow finishes, so reordering
+        // flow executions alone can't interleave a required action between
+        // two flow challenges (confirmed empirically this session). Making
+        // project selection itself a required action
+        // (AutomProjectSelectionRequiredAction, registered at priority 59,
+        // one above CONFIGURE_TOTP/autom-optional-totp's 58) is the only way
+        // to get a real "org -> MFA -> project" order. Every other login
+        // (MFA not mandatory, or already configured) falls through below,
+        // completely unaffected.
+        if (AutomMfaUtil.isMfaMandatory(org) && !user.credentialManager().isConfiguredFor(OTPCredentialModel.TYPE)) {
+            context.getAuthenticationSession().addRequiredAction(UserModel.RequiredAction.CONFIGURE_TOTP);
+            context.getAuthenticationSession().addRequiredAction(AutomProjectSelectionRequiredAction.ID);
             context.success();
             return;
         }
